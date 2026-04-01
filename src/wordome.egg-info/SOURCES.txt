@@ -1,0 +1,15 @@
+pyproject.toml
+src/wordome/__init__.py
+src/wordome/main.py
+src/wordome.egg-info/PKG-INFO
+src/wordome.egg-info/SOURCES.txt
+src/wordome.egg-info/dependency_links.txt
+src/wordome.egg-info/requires.txt
+src/wordome.egg-info/top_level.txt
+src/wordome/domain/__init__.py
+src/wordome/domain/component/__init__.py
+src/wordome/domain/component/word_stats_extractor.py
+src/wordome/domain/model/__init__.py
+src/wordome/domain/model/word_stats.py
+src/wordome/infrastructure/__init__.py
+src/wordome/infrastructure/component/web_fetcher.py
