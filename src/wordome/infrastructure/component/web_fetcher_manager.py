@@ -24,6 +24,9 @@ class WebFetcherManager:
     async def _fetch_async(self, url: str) -> Optional[str]:
         return await self.fetcher.fetch(url)
 
+    async def _fetch_header_test_async(self) -> None:
+        return await self.fetcher._fetch_header_test()
+
     # ---------------------------
     # Public async API
     # ---------------------------
@@ -40,7 +43,7 @@ class WebFetcherManager:
         return await self._fetch_async(url)
 
     # ---------------------------
-    # Public synchronous API
+    # Public sync API
     # ---------------------------
     def fetch_all(self, urls: List[str]) -> List[Optional[str]]:
         """
@@ -53,3 +56,9 @@ class WebFetcherManager:
         Fetch a single URL synchronously
         """
         return asyncio.run(self._fetch_async(url))
+
+    def fetch_header_test(self) -> None:
+        """
+        Fetch a single URL synchronously
+        """
+        return asyncio.run(self._fetch_header_test_async())
