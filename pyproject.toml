@@ -7,8 +7,8 @@ name = "wordome"
 version = "0.1.0"
 description = "A word frequency analysis tool"
 dependencies = [
-    "aiohttp",
     "beautifulsoup4",
+    "curl-cffi",
 ]
 
 [tool.setuptools.packages.find]
