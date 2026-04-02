@@ -5,4 +5,6 @@ dependencies:
   - python=3.12.9
   - pip
   - pip:
-    - -e .  # This installs your project (and its TOML deps) into the conda env
+    - curl_cffi
+    - -e .  # installs project (and its TOML deps) into the conda env
+  - beautifulsoup4
