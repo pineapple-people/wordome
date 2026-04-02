@@ -1,10 +1,8 @@
-from typing import Dict, List
-
-from wordome.infrastructure import WebFetcherManager
-from wordome.domain import WordStatsExtractor, WordStats
-
 from importlib import resources
+
 import wordome.resources as urls_source
+from wordome.domain import WordStats, WordStatsExtractor
+from wordome.infrastructure import WebFetcherManager
 
 # A script to verify basic functionality
 
@@ -20,12 +18,12 @@ urls = resource_path.read_text(encoding="utf-8").splitlines()
 print(f"URLS: {urls}")
 
 # Trigger GET requests; fetches raw HTML content (per url)
-html_results: List[str] = fetcher_manager.fetch_all(urls)
-content_map: Dict[str, str] = {url: html for url, html in zip(urls, html_results)}
+html_results: list[str] = fetcher_manager.fetch_all(urls)
+content_map: dict[str, str] = dict(zip(urls, html_results, strict=True))
 
 # Run content through dummy process to demo processings (WordStatsExtractor)
 for url, html in content_map.items():
-    word_stats: List[WordStats] = extractor.process(html)
+    word_stats: list[WordStats] = extractor.process(html)
     print(f"URL: {url}")
     for item in word_stats:
         print(f"\tword={item.word}, count={item.count}, freq={item.frequency}")
