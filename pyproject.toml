@@ -13,3 +13,7 @@ dependencies = [
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+# ruff linter/formatter configuration
+[tool.ruff]
+extend = "ruff.toml"

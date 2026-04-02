@@ -1,5 +1,5 @@
 import asyncio
-from typing import List, Optional
+
 from wordome.infrastructure import WebFetcher
 
 
@@ -17,11 +17,11 @@ class WebFetcherManager:
     # ---------------------------
     # Internal async helpers
     # ---------------------------
-    async def _fetch_all_async(self, urls: List[str]) -> List[Optional[str]]:
+    async def _fetch_all_async(self, urls: list[str]) -> list[str | None]:
         tasks = [self.fetcher.fetch(url) for url in urls]
         return await asyncio.gather(*tasks, return_exceptions=False)
 
-    async def _fetch_async(self, url: str) -> Optional[str]:
+    async def _fetch_async(self, url: str) -> str | None:
         return await self.fetcher.fetch(url)
 
     async def _fetch_header_test_async(self) -> None:
@@ -30,13 +30,13 @@ class WebFetcherManager:
     # ---------------------------
     # Public async API
     # ---------------------------
-    async def fetch_all_async(self, urls: List[str]) -> List[Optional[str]]:
+    async def fetch_all_async(self, urls: list[str]) -> list[str | None]:
         """
         Fetch multiple URLs asynchronously
         """
         return await self._fetch_all_async(urls)
 
-    async def fetch_async(self, url: str) -> Optional[str]:
+    async def fetch_async(self, url: str) -> str | None:
         """
         Fetch a single URL asynchronously
         """
@@ -45,13 +45,13 @@ class WebFetcherManager:
     # ---------------------------
     # Public sync API
     # ---------------------------
-    def fetch_all(self, urls: List[str]) -> List[Optional[str]]:
+    def fetch_all(self, urls: list[str]) -> list[str | None]:
         """
         Fetch multiple URLs synchronously
         """
         return asyncio.run(self._fetch_all_async(urls))
 
-    def fetch(self, url: str) -> Optional[str]:
+    def fetch(self, url: str) -> str | None:
         """
         Fetch a single URL synchronously
         """
