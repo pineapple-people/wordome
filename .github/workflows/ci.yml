@@ -32,7 +32,7 @@ jobs:
         # Linter check
         # Based on rules defined from ruff.toml/pyproject.toml
         # Note: "--format=github" creates interactive annotations in the PR 'Files Changed' tab
-        run: ruff check --format=github .
+        run: ruff check --output-format=github .
 
       - name: Run Ruff Format Check
         # Format check (readability)
