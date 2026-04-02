@@ -6,6 +6,8 @@ from curl_cffi.requests import AsyncSession
 class WebFetcher:
     """
     Service class to provide HTML fetching functionality
+    TODO: introduce "asynccontextmanager" to manage async session
+    import contextlib import asynccontextmanager
     """
 
     DEFAULT_TIMEOUT = 15.0

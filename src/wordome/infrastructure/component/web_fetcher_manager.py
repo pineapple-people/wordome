@@ -8,7 +8,7 @@ class WebFetcherManager:
     Manages fetching URLs using WebFetcher.
     Returns HTML strings ready for parsing.
 
-    Note: can be used asynchronously or synchronously
+    Note: supports both synchronous and asynchronous modes (blocking vs concurrency)
     """
 
     def __init__(self, fetcher: WebFetcher = None):

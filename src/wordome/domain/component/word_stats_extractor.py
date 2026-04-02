@@ -1,5 +1,5 @@
 import re
-from typing import Counter, List
+from typing import Counter, List, Tuple
 
 from bs4 import BeautifulSoup
 
@@ -7,7 +7,7 @@ from wordome.domain.model.word_stats import WordStats
 
 
 class WordStatsExtractor:
-    DEFAULT_TOP_N = 100
+    DEFAULT_TOP_N = 20
     DEFAULT_MIN_WORD_LENGTH = 3
     DEFAULT_IGNORE_WORDS = []
 
@@ -36,13 +36,13 @@ class WordStatsExtractor:
         filtered_words: List[str] = [
             w
             for w in words
-            if len(w) >= self.DEFAULT_MIN_WORD_LENGTH
+            if len(w) >= WordStatsExtractor.DEFAULT_MIN_WORD_LENGTH
             and w not in WordStatsExtractor.DEFAULT_IGNORE_WORDS
         ]
 
         # 5. Calculate Frequencies
         total_count: int = len(filtered_words)
-        counts: list[tuple[str, int]] = Counter(filtered_words).most_common(
+        counts: List[Tuple[str, int]] = Counter(filtered_words).most_common(
             self.DEFAULT_TOP_N
         )
 
