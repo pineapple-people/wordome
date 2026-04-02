@@ -1,5 +1,5 @@
 import re
-from typing import Counter, List, Tuple
+from collections import Counter
 
 from bs4 import BeautifulSoup
 
@@ -16,7 +16,7 @@ class WordStatsExtractor:
     Extracts content from HTML
     """
 
-    def process(self, html_content: str) -> List[WordStats]:
+    def process(self, html_content: str) -> list[WordStats]:
         """
         1. Clean (Extract words)
         2. Analyze (Count & Frequency)
@@ -33,7 +33,7 @@ class WordStatsExtractor:
         words = re.findall(r"\b\w+\b", raw_text.lower())
 
         # 4. Filter by length and stop words
-        filtered_words: List[str] = [
+        filtered_words: list[str] = [
             w
             for w in words
             if len(w) >= WordStatsExtractor.DEFAULT_MIN_WORD_LENGTH
@@ -42,7 +42,7 @@ class WordStatsExtractor:
 
         # 5. Calculate Frequencies
         total_count: int = len(filtered_words)
-        counts: List[Tuple[str, int]] = Counter(filtered_words).most_common(
+        counts: list[tuple[str, int]] = Counter(filtered_words).most_common(
             self.DEFAULT_TOP_N
         )
 

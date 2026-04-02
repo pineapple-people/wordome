@@ -1,0 +1,60 @@
+# Basic settings
+line-length = 88
+target-version = "py311"
+
+# Exclude common directories
+exclude = [
+    ".git",
+    ".venv",
+    "__pycache__",
+    "build",
+    "dist",
+]
+
+# Formatting rules
+[format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+# Linting rules
+[lint]
+# Standard rule sets for most projects
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes (undefined names, unused imports)
+    "I",   # isort (import sorting)
+    "UP",  # pyupgrade (modern Python syntax)
+    "B",   # flake8-bugbear (common bugs)
+    "C4",  # flake8-comprehensions (better comprehensions)
+    "SIM", # flake8-simplify (code simplification)
+    "RUF", # Ruff-specific rules
+]
+
+# Rules that are often too strict
+ignore = [
+    "E501",  # line too long (formatter handles this)
+    "B008",  # do not perform function calls in argument defaults
+    "B904",  # raise from None (sometimes too strict)
+    "SIM108", # use ternary operator (personal preference)
+    "RUF012", # mutable class attributes (advanced)
+]
+
+# Allow unused variables when underscore-prefixed
+dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+
+# Import sorting rules
+[lint.isort]
+known-first-party = ["wordome"]
+combine-as-imports = true
+split-on-trailing-comma = false
+
+# Per-file rules
+[lint.per-file-ignores]
+"tests/**" = [
+    "S101",  # Allow asserts in tests
+    "B011",  # allow bare asserts
+]
+"__init__.py" = ["F401"]  # Allow unused imports in __init__.py
