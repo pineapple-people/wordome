@@ -7,10 +7,13 @@ from wordome.infrastructure import WebFetcher
 
 
 async def run_demo_async():
-    # Component to fetch HTML content
-    fetcher = WebFetcher()
+    """
+    Script-like flow to showcase basic functionality
+    - Fetching HTML from URLs
+    - Example processing task to execute on the HTML content
+    """
 
-    # Component to operate/process the HTML content (business logic)
+    fetcher = WebFetcher()
     extractor = WordStatsExtractor()
 
     # URLs (temporarily sourced from local file)
@@ -31,13 +34,16 @@ async def run_demo_async():
 
 
 def run_demo():
-    """Synchronous wrapper for backward compatibility"""
+    """
+    Synchronous wrapper over the async demo script
+    """
     asyncio.run(run_demo_async())
 
 
 # prevents auto execution during import
 if __name__ == "__main__":
     """
-    Standalone execution for debugging purposes only
+    Standalone execution
+    Debugging purposes
     """
     run_demo()
