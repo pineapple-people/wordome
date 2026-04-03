@@ -1,10 +1,10 @@
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from wordome.infrastructure import WebFetcherManager
+from wordome.infrastructure import WebFetcher
 
 router = APIRouter(prefix="/sandbox", tags=["sandbox"])
-web_fetcher_manager = WebFetcherManager()
+web_fetcher = WebFetcher()
 
 
 @router.get("/")
@@ -19,22 +19,22 @@ async def sandbox_root():
     }
 
 
-@router.get("/headers")
-async def headers():
+@router.get("/fetch/headers")
+async def fetch_headers():
     """
     Show request headers (generated via curl_cffi)
     Note: unique variation generated per request
     """
-    return await web_fetcher_manager.fetch_header_async()
+    return await web_fetcher.fetch_headers()
 
 
 class FetchRequest(BaseModel):
     url: str
 
 
-@router.post("/fetch_html")
+@router.post("/fetch/html")
 async def fetch_html(request: FetchRequest):
     """
     Get HTML for a given URL
     """
-    return await web_fetcher_manager.fetch_async(request.url)
+    return await web_fetcher.fetch(request.url)

@@ -1,13 +1,14 @@
+import asyncio
 from importlib import resources
 
 import wordome.resources as urls_source
 from wordome.domain import WordStats, WordStatsExtractor
-from wordome.infrastructure import WebFetcherManager
+from wordome.infrastructure import WebFetcher
 
 
-def run_demo():
+async def run_demo_async():
     # Component to fetch HTML content
-    fetcher_manager = WebFetcherManager()
+    fetcher = WebFetcher()
 
     # Component to operate/process the HTML content (business logic)
     extractor = WordStatsExtractor()
@@ -18,7 +19,7 @@ def run_demo():
     print(f"URLS: {urls}")
 
     # Trigger GET requests; fetches raw HTML content (per url)
-    html_results: list[str] = fetcher_manager.fetch_all(urls)
+    html_results: list[str] = await fetcher.fetch_many(urls)
     content_map: dict[str, str] = dict(zip(urls, html_results, strict=True))
 
     # Run content through dummy process to demo processings (WordStatsExtractor)
@@ -27,6 +28,10 @@ def run_demo():
         print(f"URL: {url}")
         for item in word_stats:
             print(f"\tword={item.word}, count={item.count}, freq={item.frequency}")
+
+def run_demo():
+    """Synchronous wrapper for backward compatibility"""
+    asyncio.run(run_demo_async())
 
 
 # prevents auto execution during import
