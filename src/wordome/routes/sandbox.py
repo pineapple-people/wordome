@@ -6,6 +6,7 @@ from wordome.infrastructure import WebFetcherManager
 router = APIRouter(prefix="/sandbox", tags=["sandbox"])
 web_fetcher_manager = WebFetcherManager()
 
+
 @router.get("/")
 async def sandbox_root():
     """
@@ -14,8 +15,9 @@ async def sandbox_root():
     return {
         "name": "Sandbox",
         "description": "Debug and testing endpoints",
-        "endpoints": ["/headers", "/fetch_html"]
+        "endpoints": ["/headers", "/fetch_html"],
     }
+
 
 @router.get("/headers")
 async def headers():
@@ -28,6 +30,7 @@ async def headers():
 
 class FetchRequest(BaseModel):
     url: str
+
 
 @router.post("/fetch_html")
 async def fetch_html(request: FetchRequest):
