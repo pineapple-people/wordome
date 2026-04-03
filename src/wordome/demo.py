@@ -32,6 +32,6 @@ def run_demo():
 # prevents auto execution during import
 if __name__ == "__main__":
     """
-    Debugging purposes only
+    Standalone execution for debugging purposes only
     """
     run_demo()

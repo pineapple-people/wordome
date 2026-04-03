@@ -28,9 +28,9 @@ class WebFetcher:
                 print(f"Timeout (over {WebFetcher.DEFAULT_TIMEOUT}s): {url}")
             except Exception as e:
                 print(f"Error: {url} | ({e})")
-            return None
+                return None
 
-    async def _fetch_header_test(self) -> None:
+    async def _fetch_header_test(self) -> dict[any] | None:
         """
         Test function to observe request headers (managed by curl_cffi)
         """
@@ -38,6 +38,9 @@ class WebFetcher:
             try:
                 url = "https://httpbin.org/headers"
                 response = await session.get(url)
-                print(f"HEADERS:\n{json.dumps(response.json(), indent=2)}")
+                headers = json.dumps(response.json(), indent=2)
+                print(f"HEADERS:\n{headers}")
+                return headers
             except Exception as e:
                 print(f"Error (header debugger): {e}")
+                return None
