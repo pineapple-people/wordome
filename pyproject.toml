@@ -13,6 +13,9 @@ dependencies = [
     "uvicorn",
 ]
 
+[project.scripts]
+wordome = "wordome.main:main"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

@@ -34,14 +34,17 @@
 # Install the package in development mode
 > pip install -e .
 
+# Conversely, this uninstall command can be useful for troubleshooting
+> pip uninstall wordome -y
 ```
 
 ### Running the app
 ```
-# API service (default mode)
+# API service
+# Note: this alias is defined in within pyproject.toml
 > wordome
 
-# demo mode (executes a fixed script to showcase basic functionality)
+# Demo mode (executes a fixed flow that showcases basic functionality)
 > wordome --mode demo
 ```
 
