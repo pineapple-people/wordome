@@ -29,6 +29,7 @@ async def run_demo_async():
         for item in word_stats:
             print(f"\tword={item.word}, count={item.count}, freq={item.frequency}")
 
+
 def run_demo():
     """Synchronous wrapper for backward compatibility"""
     asyncio.run(run_demo_async())
