@@ -24,11 +24,11 @@ class WebFetcherManager:
     async def _fetch_async(self, url: str) -> str | None:
         return await self.fetcher.fetch(url)
 
-    async def _fetch_header_test_async(self) -> None:
+    async def _fetch_header_async(self) -> dict[any] | None:
         return await self.fetcher._fetch_header_test()
 
     # ---------------------------
-    # Public async API
+    # Public API: async versions
     # ---------------------------
     async def fetch_all_async(self, urls: list[str]) -> list[str | None]:
         """
@@ -42,8 +42,15 @@ class WebFetcherManager:
         """
         return await self._fetch_async(url)
 
+    async def fetch_header_async(self) -> dict[any] | None:
+        """
+        Display request headers (returned via httpbin response
+        """
+        return await self._fetch_header_async()
+
     # ---------------------------
-    # Public sync API
+    # Public API: synchronous versions
+    # TODO: unused? deprecate these if so
     # ---------------------------
     def fetch_all(self, urls: list[str]) -> list[str | None]:
         """
@@ -57,8 +64,8 @@ class WebFetcherManager:
         """
         return asyncio.run(self._fetch_async(url))
 
-    def fetch_header_test(self) -> None:
+    def fetch_header(self) -> dict[any] | None:
         """
-        Fetch a single URL synchronously
+        Display request headers (returned via httpbin response)
         """
-        return asyncio.run(self._fetch_header_test_async())
+        return asyncio.run(self._fetch_header_async())
