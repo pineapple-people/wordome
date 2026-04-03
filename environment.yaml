@@ -2,10 +2,12 @@ name: wordome_env
 channels:
   - conda-forge
 dependencies:
-  - beautifulsoup4
-  - ruff
   - python=3.12.9
   - pip
+  - beautifulsoup4
+  - ruff
+  - fastapi
+  - uvicorn
   - pip:
     - curl_cffi # not available in conda-forge channel
     - -e .  # installs project (and its TOML deps) into the conda env

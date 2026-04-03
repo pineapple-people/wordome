@@ -1,29 +1,20 @@
-from importlib import resources
+import argparse
 
-import wordome.resources as urls_source
-from wordome.domain import WordStats, WordStatsExtractor
-from wordome.infrastructure import WebFetcherManager
+import uvicorn
 
-# A script to verify basic functionality
+from wordome.api import app
+from wordome.demo import run_demo
 
-# Component to fetch HTML content
-fetcher_manager = WebFetcherManager()
 
-# Component to operate/process the HTML content (business logic)
-extractor = WordStatsExtractor()
+def main():
+    parser = argparse.ArgumentParser(description="Wordome")
+    parser.add_argument("--mode", "-m", choices=["demo", "api"], default="api")
+    args = parser.parse_args()
+    if args.mode == "demo":
+        run_demo()
+    else:
+        uvicorn.run(app, host="127.0.0.1", port=8000)
 
-# URLs (temporarily sourced from local file)
-resource_path = resources.files(urls_source).joinpath("urls.txt")
-urls = resource_path.read_text(encoding="utf-8").splitlines()
-print(f"URLS: {urls}")
 
-# Trigger GET requests; fetches raw HTML content (per url)
-html_results: list[str] = fetcher_manager.fetch_all(urls)
-content_map: dict[str, str] = dict(zip(urls, html_results, strict=True))
-
-# Run content through dummy process to demo processings (WordStatsExtractor)
-for url, html in content_map.items():
-    word_stats: list[WordStats] = extractor.process(html)
-    print(f"URL: {url}")
-    for item in word_stats:
-        print(f"\tword={item.word}, count={item.count}, freq={item.frequency}")
+if __name__ == "__main__":
+    main()
