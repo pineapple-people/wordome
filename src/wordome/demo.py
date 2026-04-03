@@ -1,15 +1,19 @@
+import asyncio
 from importlib import resources
 
 import wordome.resources as urls_source
 from wordome.domain import WordStats, WordStatsExtractor
-from wordome.infrastructure import WebFetcherManager
+from wordome.infrastructure import WebFetcher
 
 
-def run_demo():
-    # Component to fetch HTML content
-    fetcher_manager = WebFetcherManager()
+async def run_demo_async():
+    """
+    Script-like flow to showcase basic functionality
+    - Fetching HTML from URLs
+    - Example processing task to execute on the HTML content
+    """
 
-    # Component to operate/process the HTML content (business logic)
+    fetcher = WebFetcher()
     extractor = WordStatsExtractor()
 
     # URLs (temporarily sourced from local file)
@@ -18,7 +22,7 @@ def run_demo():
     print(f"URLS: {urls}")
 
     # Trigger GET requests; fetches raw HTML content (per url)
-    html_results: list[str] = fetcher_manager.fetch_all(urls)
+    html_results: list[str] = await fetcher.fetch_many(urls)
     content_map: dict[str, str] = dict(zip(urls, html_results, strict=True))
 
     # Run content through dummy process to demo processings (WordStatsExtractor)
@@ -29,9 +33,17 @@ def run_demo():
             print(f"\tword={item.word}, count={item.count}, freq={item.frequency}")
 
 
+def run_demo():
+    """
+    Synchronous wrapper over the async demo script
+    """
+    asyncio.run(run_demo_async())
+
+
 # prevents auto execution during import
 if __name__ == "__main__":
     """
-    Standalone execution for debugging purposes only
+    Standalone execution
+    Debugging purposes
     """
     run_demo()
