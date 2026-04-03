@@ -53,3 +53,20 @@
 # Note: fails if corrections cannot be applied automatically
 > make ruff
 ```
+
+## Other Notes
+
+### VS Code - Suggested configs
+```
+# settings.json
+{
+    "python-envs.defaultEnvManager": "ms-python.python:conda",
+    "python-envs.defaultPackageManager": "ms-python.python:conda",
+    "files.exclude": {
+        "**/__pycache__": true,
+        "**/*.pyc": true,
+        "**/.ruff_cache": true
+    },
+    "files.autoSave": "onFocusChange"
+}
+```
