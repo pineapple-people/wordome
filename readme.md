@@ -49,7 +49,7 @@
 
 ### Ruff (code quality tool)
 ```
-# Automatically lint and format code changes
+# Run this as code changes are made to auto-format and lint code
 # Note: fails if corrections cannot be applied automatically
 > make ruff
 ```

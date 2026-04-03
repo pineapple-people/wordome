@@ -50,7 +50,7 @@ class WebFetcherManager:
 
     # ---------------------------
     # Public API: synchronous versions
-    # Note: never used? If so, deprecate?
+    # TODO: unused? deprecate these if so
     # ---------------------------
     def fetch_all(self, urls: list[str]) -> list[str | None]:
         """
