@@ -9,6 +9,15 @@
 > conda env list
 ```
 
+### Usage
+```
+# Activate environment
+> conda activate wordome_env
+
+# Deactivate environment
+> conda deactivate
+```
+
 ### Updating environment (to match config file)
 ```
 # Update environment with any changes to environment.yaml
@@ -18,13 +27,11 @@
 > conda env update -f environment.yaml --prune
 ```
 
-### Usage
+### Installing Packages
 ```
-# Activate environment
-> conda activate wordome_env
-
-# Deactivate environment
-> conda deactivate
+# Install via conda-forge channel (Conda's canonical source)
+# Note: Try through Conda first, fallback to pip (Conda ensures compatible dependencies)
+conda install -c conda-forge beautifulsoup4
 ```
 
 ## Wordome Application
