@@ -47,3 +47,4 @@ if __name__ == "__main__":
     Debugging purposes
     """
     run_demo()
+    exit()
