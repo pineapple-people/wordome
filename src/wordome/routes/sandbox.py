@@ -1,10 +1,12 @@
 from fastapi import APIRouter
 from pydantic import BaseModel
 
+from wordome.domain import ReviewSectionDetector
 from wordome.infrastructure import WebFetcher
 
 router = APIRouter(prefix="/sandbox", tags=["sandbox"])
 web_fetcher = WebFetcher()
+review_detector = ReviewSectionDetector()
 
 
 @router.get("/")
@@ -38,3 +40,13 @@ async def fetch_html(request: FetchRequest):
     Get HTML for a given URL
     """
     return await web_fetcher.fetch(request.url)
+
+
+@router.post("/detect/reviews")
+async def detect_reviews(request: FetchRequest):
+    """
+    Detects whether HTML contains a review section
+    """
+    html = await web_fetcher.fetch(request.url)
+    if html:
+        return review_detector.process(html)
