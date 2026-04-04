@@ -1,13 +1,29 @@
 import re
 from collections import Counter
+from dataclasses import dataclass
 
 from bs4 import BeautifulSoup
 
-from wordome.domain.model.word_stats import WordStats
+
+@dataclass(frozen=True)
+class WordStats:
+    """
+    A pure Data Transfer Object (DTO).
+    Represents the statistical result for a single word.
+    """
+
+    word: str
+    count: int
+    frequency: float
 
 
 class WordStatsExtractor:
-    DEFAULT_TOP_N = 20
+    """
+    Extracts top N most frequent words from HTML content with frequency statistics
+    Note: example to demonstrate basic functionality with BeautifulSoup
+    """
+
+    DEFAULT_TOP_N = 10
     DEFAULT_MIN_WORD_LENGTH = 3
     DEFAULT_IGNORE_WORDS = []
 
