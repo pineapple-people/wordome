@@ -1,3 +1,3 @@
-from .web_fetcher import WebFetcher
+from .scraping.web_fetcher import WebFetcher
 
 __all__ = ["WebFetcher"]
