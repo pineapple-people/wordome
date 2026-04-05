@@ -1,7 +1,7 @@
 import uvicorn
 from fastapi import FastAPI
 
-from wordome.routes import health, sandbox
+from wordome.application.routes import health, sandbox
 
 # Initialize app
 app = FastAPI(

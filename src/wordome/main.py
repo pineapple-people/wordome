@@ -2,7 +2,7 @@ import argparse
 
 import uvicorn
 
-from wordome.api import app
+from wordome.app import app
 from wordome.demo import run_demo
 
 
