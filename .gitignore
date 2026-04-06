@@ -36,3 +36,6 @@ sdist/
 var/
 wheels/
 *.egg-info/
+
+# DB instance
+/user_data/

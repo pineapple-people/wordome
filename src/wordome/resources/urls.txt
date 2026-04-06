@@ -1,6 +1,2 @@
-http://en.wikipedia.org/wiki/Web_scraping
-https://www.google.com
-http://www.wayfair.com
-https://www.wayfair.com/kitchen-tabletop/pdp/vitamix-stainless-steel-container-vtm10031.html
-http://www.amazon.com/Fendi-Pre-loved-Patent-Leather-Baguette/dp/B0GT6VHKBS/
-http://www.homedepot.com/p/6ft-x-8ft-Pine-Pressure-Treated-Privacy-Dog-Ear-Flat-Wood-Fence-Panel-158083/203733689
+https://www.amazon.com/Puffs-Ultra-Non-Lotion-Tissues-Cubes/dp/B09YL81PWH
+https://www.amazon.com/Doritos-Flavored-Tortilla-Chips-Variety/dp/B0DKVKC5RX/
