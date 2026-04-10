@@ -9,6 +9,7 @@ from wordome.infrastructure import WebFetcher
 
 
 async def run_pipeline_async():
+    '''ecouple product information and reviews into a relational database schema'''
     # 1. Initialization
     db = DBManager("wordome_v1.db")
     fetcher = WebFetcher()
@@ -87,7 +88,7 @@ async def run_pipeline_async():
     print(f"Total Reviews saved: {total_reviews_saved}")
     print("="*30)
 
-def run_demo3():
+def start_ingestion():
     """
     Synchronous wrapper over the async demo script
     """
@@ -99,7 +100,7 @@ if __name__ == "__main__":
     Standalone execution
     Debugging purposes
     """
-    run_demo3()
+    start_ingestion()
 
 if __name__ == "__main__":
-    run_demo3()
+    start_ingestion()
