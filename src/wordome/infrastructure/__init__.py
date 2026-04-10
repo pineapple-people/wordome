@@ -1,4 +1,4 @@
-from .component.web_fetcher import WebFetcher
 from .component.db_manager import DBManager
+from .component.web_fetcher import WebFetcher
 
-__all__ = ["WebFetcher", "DBManager"]
+__all__ = ["DBManager", "WebFetcher"]

@@ -1,21 +1,23 @@
 {
   "amazon": {
     "product_meta": {
-    "container": "#item_details",
+    "container": "body",
     "selectors": {
-        "product_id": { "css": "div#averageCustomerReviews", "attr": "data-asin" },
-        "brand": { "css": "tr:nth-of-type(1) td", "type": "text" },
-        "manufacturer": { "css": "tr:nth-of-type(5) td", "type": "text" },
-        "category": { "css": "ul.a-unordered-list li:last-child span.a-list-item span", "type": "text" },
-        "average_rate": { "css": "#averageCustomerReviews span.a-icon-alt", "type": "text" },
+        "product_id": { "css": "input#ASIN", "attr": "value" },
+        "product_name": { "css": "h1#title", "type": "text" }, 
+        "price":{ "css": "#corePrice_feature_div .a-offscreen, .apexPriceToPay .a-offscreen, .a-price .a-offscreen", "type": "text" }, 
+        "brand": { "css": "th:contains('Brand Name') + td", "type": "text" }, 
+        "manufacturer": { "css": "th:contains('Manufacturer') + td", "type": "text" },
+        "category_raw": { "css": "li:-soup-contains('Best Sellers Rank'), tr:-soup-contains('Best Sellers Rank') td", "type": "text" },
+        "average_rate": { "css": "span.a-icon-alt", "type": "text" },
         "total_ratings": { "css": "#acrCustomerReviewText", "type": "text" }
-      }
-    },
-    
+    }
+  },  
+
     "review_selectors":  {
       "container": "li[data-hook='review']",
       "selectors": {
-        "product_id": { "css": "div#averageCustomerReviews", "attr": "data-asin" },
+        "product_id": { "css": "input#ASIN", "attr": "value" },
         "review_id": { "attr": "id" },
         "rating": { "css": "i[data-hook='review-star-rating'] span.a-icon-alt", "type": "text" },
         "title": { "css": "a[data-hook='review-title'] > span:last-child", "type": "text" },
