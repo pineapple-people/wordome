@@ -1,90 +1,105 @@
 import asyncio
 import json
-from pathlib import Path
-from wordome.infrastructure import WebFetcher
-from wordome.infrastructure import DBManager
-from wordome.domain import SiteParser
-
-
-import asyncio
 from importlib import resources
 
 import wordome.resources as urls_source
+from wordome.domain.component.site_parser import SiteParser
+from wordome.infrastructure import DBManager
 from wordome.infrastructure import WebFetcher
 
 
 async def run_pipeline_async():
-    # --- 1. 初始化 ---
+    # 1. Initialization
     db = DBManager("wordome_v1.db")
     fetcher = WebFetcher()
-    total_saved = 0
+    total_reviews_saved = 0
+    total_products_saved = 0
 
-    # URLs (temporarily sourced from local file)
+    # Load data
     resource_path = resources.files(urls_source).joinpath("urls.txt")
-    urls = resource_path.read_text(encoding="utf-8").splitlines()
-    print(f"URLS: {urls}")
-
-    # Trigger GET requests; fetches raw HTML content (per url)
-    html_results: list[str] = await fetcher.fetch_many(urls)
-    content_map: dict[str, str] = dict(zip(urls, html_results, strict=True))
+    urls = [line.strip() for line in resource_path.read_text(encoding="utf-8").splitlines() if line.strip()]
     
-    with open("config/sites_config.json", "r") as f:
-        config_data = json.load(f)
-    parser = SiteParser(config_data)
-
-
     if not urls:
         print("No URLs to process. Exiting.")
         return
 
+    print(f"Starting pipeline for {len(urls)} URLs...")
 
-    # --- 3. 异步抓取 ---
+    # Load configuration
+    with open("config/sites_config.json") as f:
+        config_data = json.load(f)
+    parser = SiteParser(config_data)
+
+    # 2. Batch fetch
     html_results = await fetcher.fetch_many(urls)
     content_map = dict(zip(urls, html_results))
-
-    # --- 4. 循环处理逻辑 (保持不变) ---
+    
+    # 3. Iteration logic
     for url, html in content_map.items():
-        # ... 这里是你之前的 dispatcher 和 parser 逻辑 ...
-        # 如果域名没在 sites_config.json 里，这里会自动 skip
-        pass 
+        if not html:
+            print(f"[FAILED] Could not fetch content for: {url}")
+            continue
 
-        # A. 识别身份 (Dispatcher 逻辑)
-        # 遍历配置里的 key，比如 "amazon", "yelp"
+        # A. Identify type (Dispatcher)
         site_key = None
         for key in config_data.keys():
             if key in url.lower():
                 site_key = key
                 break
-        
-        # B. 如果匹配成功就处理，不匹配就跳过
+
         if not site_key:
-            print(f"⏩ [SKIP] No config found for: {url}")
+            print(f"[SKIP] No config found for: {url}")
             continue
 
-        print(f"🎯 [MATCH] Found config for [{site_key}]. Parsing...")
+        print(f" [MATCH] Processing [{site_key}] | URL: {url}")
 
         try:
-            structured_reviews = parser.parse(html, site_key)
+            # B. Parse and store product metadata (Parent)
+            product_info = parser.parse_product_info(html, site_key, url=url)
             
-            if structured_reviews:
-                # D. 存入数据库
-                db.save_batch(structured_reviews)
-                print(f"✅ [SAVE] Successfully stored {len(structured_reviews)} reviews.")
-                total_saved += len(structured_reviews)
-            else:
-                print(f"⚠️ [WARN] No reviews extracted from {url} despite matching config.")
+            if product_info:
+                db.save_product(product_info)
+                print(f"[PRODUCT] Saved: {product_info.product_name} ({product_info.product_id})")
+                total_products_saved += 1
                 
+                # C. Parse and store reviews (Children)
+                # Only save reviews after product is successfully saved
+                structured_reviews = parser.parse_reviews(html, site_key)
+
+                if structured_reviews:
+                    for r in structured_reviews:
+                        r.product_id = product_info.product_id
+                    
+                    db.save_review_batch(structured_reviews)
+                    print(f"[REVIEWS] Stored {len(structured_reviews)} reviews.")
+                    total_reviews_saved += len(structured_reviews)
+                else:
+                    print(f"[WARN] No reviews found on this page.")
+            else:
+                print(f"[ERROR] Could not parse product info from {url}. Skipping reviews.")
+
         except Exception as e:
-            print(f"❌ [ERROR] Failed to process {url}: {e}")
+            print(f"[CRITICAL] Failed to process {url}: {e}")
 
-    print(f"\n--- Pipeline Finished ---")
-    print(f"Total reviews saved to database: {total_saved}")
+    print("\n" + "="*30)
+    print("--- Pipeline Finished ---")
+    print(f"Total Products saved/updated: {total_products_saved}")
+    print(f"Total Reviews saved: {total_reviews_saved}")
+    print("="*30)
 
-def main():
-    try:
-        asyncio.run(run_pipeline_async())
-    except KeyboardInterrupt:
-        pass
+def run_demo3():
+    """
+    Synchronous wrapper over the async demo script
+    """
+    asyncio.run(run_pipeline_async())
+
+# prevents auto execution during import
+if __name__ == "__main__":
+    """
+    Standalone execution
+    Debugging purposes
+    """
+    run_demo3()
 
 if __name__ == "__main__":
-    main()
+    run_demo3()

@@ -4,10 +4,12 @@ with sync_playwright() as p:
     browser = p.chromium.launch(headless=False)
     page = browser.new_page()
 
-    page.goto("https://www.amazon.com/product-reviews/B09YL81PWH/ref=cm_cr_dp_d_show_all_btm?ie=UTF8")
+    page.goto(
+        "https://www.amazon.com/product-reviews/B09YL81PWH/ref=cm_cr_dp_d_show_all_btm?ie=UTF8"
+    )
 
     # scroll to trigger review loading
-    #page.mouse.wheel(0, 2000)
+    # page.mouse.wheel(0, 2000)
     page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
 
     try:

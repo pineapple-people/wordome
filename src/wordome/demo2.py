@@ -33,7 +33,9 @@ async def run_demo_async():
             print("\t[No content extracted or words found]")
             continue
         for item in word_stats[:10]:
-            print(f"\tword={item.word:12} | count={item.count:3} | freq={item.frequency:.4f}")
+            print(
+                f"\tword={item.word:12} | count={item.count:3} | freq={item.frequency:.4f}"
+            )
 
 
 def run_demo():
