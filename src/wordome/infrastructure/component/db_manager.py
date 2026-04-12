@@ -1,109 +1,52 @@
-import sqlite3
-from dataclasses import asdict
-from datetime import datetime
-from typing import List
-from wordome.domain.model.review import ScrapedReview
-from wordome.domain.model.product import ScrapedProductInfo 
+import asyncio
+from playwright.async_api import async_playwright
 
-class DBManager:
-    def __init__(self, db_path: str = "wordome.db"):
-        self.db_path = db_path
-        self._init_db()
+async def fetch_html(url: str):
+    async with async_playwright() as p:
+        # 1. 启动浏览器，保留你发现的解药 --disable-http2
+        browser = await p.chromium.launch(
+            headless=True, 
+            args=["--disable-http2"] 
+        )
+        
+        # 2. 模拟一个真实且干净的浏览器环境
+        context = await browser.new_context(
+            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            viewport={'width': 1920, 'height': 1080}
+        )
+        
+        page = await context.new_page()
+        
+        try:
+            print(f"🌐 正在获取 HTML: {url}")
+            
+            # 3. 核心改进：不要用 networkidle
+            # 使用 'domcontentloaded' 意味着 HTML 结构加载完即停止等待
+            await page.goto(url, wait_until="domcontentloaded", timeout=60000)
+            
+            # 4. 强制等待几秒，确保那些异步加载的评论（React/Vue 渲染）能跑出来
+            await page.wait_for_timeout(5000) 
+            
+            # 5. 拿到渲染后的完整 HTML
+            html_content = await page.content()
+            print(f"✅ 成功获取 HTML，大小: {len(html_content)} 字节")
+            
+            return html_content
 
-    def _init_db(self):
-        """Initialize the database: create a product table and a review table"""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
+        except Exception as e:
+            print(f"❌ 获取失败: {e}")
+            return None
+        finally:
+            await browser.close()
 
-            # 1. product table
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS products (
-                    product_id TEXT PRIMARY KEY,  -- ASIN
-                    source TEXT,
-                    product_name TEXT,
-                    brand TEXT,
-                    manufacturer TEXT,
-                    main_category TEXT, 
-                    sub_category TEXT, 
-                    price REAL,
-                    average_rate REAL,
-                    total_ratings INTEGER,
-                    updated_at TIMESTAMP
-                )
-            """)
+async def main():
+    target_url = "https://www.bestbuy.com/site/reviews/beats-studio-pro-wireless-noise-cancelling-over-the-ear-headphones-black/6501017"
+    html = await fetch_html(target_url)
+    
+    if html:
+        with open("raw_content.html", "w", encoding="utf-8") as f:
+            f.write(html)
+        print("💾 文件已保存至 raw_content.html")
 
-            # 2. review table linked via product_id
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS reviews (
-                    review_id TEXT PRIMARY KEY,
-                    source TEXT,
-                    product_id TEXT,
-                    rating REAL,
-                    title TEXT,
-                    content TEXT,
-                    review_date TIMESTAMP,
-                    is_verified INTEGER,
-                    FOREIGN KEY (product_id) REFERENCES products (product_id)
-                )
-            """)
-            conn.commit()
-
-    def save_product(self, product: ScrapedProductInfo):
-        """Save or update product information (UPSERT logic)"""
-        data = asdict(product)
-
-        # Ensure the timestamp is recorded
-        data["updated_at"] = datetime.now().isoformat()
-
-        # SQL statement corresponding to the new field names
-        query = """
-            INSERT OR REPLACE INTO products 
-            (product_id, source, product_name, brand, manufacturer, 
-             main_category, sub_category, price, average_rate, total_ratings, updated_at)
-            VALUES 
-            (:product_id, :source, :product_name, :brand, :manufacturer, 
-             :main_category, :sub_category, :price, :average_rate, :total_ratings, :updated_at)
-        """
-
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute(query, data)
-            conn.commit()
-
-    def save_review(self, review: ScrapedReview):
-        """Save single comment"""
-        data = asdict(review)
-        data["is_verified"] = 1 if data["is_verified"] else 0
-        if isinstance(data["review_date"], datetime):
-            data["review_date"] = data["review_date"].isoformat()
-
-        query = """
-            INSERT OR REPLACE INTO reviews 
-            (review_id, source, product_id, rating, title, content, review_date, is_verified)
-            VALUES (:review_id, :source, :product_id, :rating, :title, :content, :review_date, :is_verified)
-        """
-
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute(query, data)
-            conn.commit()
-
-    def save_review_batch(self, reviews: List[ScrapedReview]):
-        """Batch insert reviews"""
-        if not reviews:
-            return
-
-        with sqlite3.connect(self.db_path) as conn:
-            query = """
-                INSERT OR REPLACE INTO reviews 
-                (review_id, source, product_id, rating, title, content, review_date, is_verified)
-                VALUES (:review_id, :source, :product_id, :rating, :title, :content, :review_date, :is_verified)
-            """
-            processed_data = []
-            for r in reviews:
-                d = asdict(r)
-                d["is_verified"] = 1 if d["is_verified"] else 0
-                if isinstance(d["review_date"], datetime):
-                    d["review_date"] = d["review_date"].isoformat()
-                processed_data.append(d)
-
-            conn.executemany(query, processed_data)
-            conn.commit()
+if __name__ == "__main__":
+    asyncio.run(main())

@@ -1,14 +1,28 @@
 {
   "amazon": {
-    "container": "li[data-hook='review']",
-    "selectors": {
-      "product_id": {},
-      "review_id": { "attr": "id" },
-      "rating": { "css": "i[data-hook='review-star-rating'] span.a-icon-alt", "type": "text" },
-      "title": { "css": "a[data-hook='review-title'] > span:last-child", "type": "text" },
-      "content": { "css": "span[data-hook='review-body'] span", "type": "text" },
-      "review_date": { "css": "span[data-hook='review-date']", "type": "text" },
-      "is_verified": { "css": "span[data-hook='avp-badge']", "type": "text" }
+    "review_selectors": {
+      "container": "div[data-hook='review']",
+      "selectors": {
+        "review_id": {
+          "css": "div[data-hook='review']",
+          "attr": "id"
+        },
+        "rating": {
+          "css": "i[data-hook='review-star-rating'] span.a-icon-alt"
+        },
+        "title": {
+          "css": "a[data-hook='review-title'] span"
+        },
+        "content": {
+          "css": "span[data-hook='review-body'] span"
+        },
+        "review_date": {
+          "css": "span[data-hook='review-date']"
+        },
+        "is_verified": {
+          "css": "span[data-hook='avp-badge']"
+        }
+      }
     }
   }
 }

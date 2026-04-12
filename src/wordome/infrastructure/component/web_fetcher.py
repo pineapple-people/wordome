@@ -48,7 +48,12 @@ class WebFetcher:
         Core request logic
         """
         try:
-            response = await session.get(url=url, impersonate="chrome120")
+            response = await session.get(
+            url=url,
+            impersonate="chrome120",
+            http_version="http1.1"   # 强制 HTTP/1.1
+            )
+            #response = await session.get(url=url, impersonate="chrome120")
             print(f"RESPONSE (HTTP status): {response.status_code}")
             return response.text
         except TimeoutError:
