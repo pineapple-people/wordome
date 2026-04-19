@@ -3,48 +3,53 @@ from contextlib import asynccontextmanager
 
 import snowflake.connector
 
-from wordome.infrastructure.database.database_config import settings
+from wordome.infrastructure.database.database_config import Settings, get_settings
 
 
 class DatabaseConnection:
+    def __init__(self, settings: Settings | None = None):
+        """Store connection settings, loading them lazily by default."""
+        self._settings = settings or get_settings()
+
     async def _run(self, fn, *args, **kwargs):
+        """
+        Run a blocking database call in a worker thread.
+        """
         return await asyncio.to_thread(fn, *args, **kwargs)
 
     @asynccontextmanager
     async def session(self):
+        """
+        Open a Snowflake connection and always close it afterward.
+        """
         conn = await self._run(
             snowflake.connector.connect,
-            user=settings.user,
-            password=settings.password,
-            account=settings.account,
-            warehouse=settings.warehouse,
-            database=settings.database,
-            schema=settings.schema,
+            user=self._settings.user,
+            password=self._settings.password,
+            account=self._settings.account,
+            warehouse=self._settings.warehouse,
+            database=self._settings.database,
+            schema=self._settings.schema,
         )
         try:
             yield conn
         finally:
             await self._run(conn.close)
 
-    async def test_connection(self):
-        """
-        Test Snowflake connectivity
-        Just open/close a connection
-        """
-        async with self.session():
-            print("Connection successful")
-
     def _execute_fetchone(self, conn, sql: str):
+        """
+        Execute a query and return a single row.
+        """
         with conn.cursor() as cur:
             cur.execute(sql)
             return cur.fetchone()
 
-    async def test_query(self):
+    async def ping(self) -> str:
         """
-        Test example query
+        Run a tiny query to confirm the database connection works.
         """
         async with self.session() as conn:
             row = await self._run(
                 self._execute_fetchone, conn, "SELECT 'hello world' AS message;"
             )
-            print(row[0])
+            return row[0] if row else ""

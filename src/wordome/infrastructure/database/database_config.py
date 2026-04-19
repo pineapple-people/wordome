@@ -1,4 +1,6 @@
-from pydantic_settings import BaseSettings
+from functools import lru_cache
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -9,10 +11,9 @@ class Settings(BaseSettings):
     database: str
     schema: str = "PUBLIC"
 
-    class Config:
-        env_file = ".env"
-        # Map environment variables to fields
-        env_prefix = "SNOWFLAKE_"
+    model_config = SettingsConfigDict(env_file=".env", env_prefix="SNOWFLAKE_")
 
 
-settings = Settings()
+@lru_cache(maxsize=1)
+def get_settings() -> Settings:
+    return Settings()
