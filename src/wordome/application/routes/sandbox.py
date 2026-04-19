@@ -54,29 +54,14 @@ async def detect_reviews(request: FetchRequest):
 
 
 @router.get("/db/ping")
-def db_ping():
-    """Test Snowflake connectivity"""
-    conn = None
-    cur = None
+async def db_ping():
+    """
+    Test Snowflake connectivity
+    """
     try:
         db_connection = DatabaseConnection()
-
-        conn = db_connection.get_connection()
-        cur = conn.cursor()
-        cur.execute("SELECT CURRENT_TIMESTAMP()")
-        result = cur.fetchone()
-
-        return {
-            "status": "connected",
-            "snowflake_time": str(result[0]),
-            "database": conn.database,
-            "schema": conn.schema,
-        }
+        await db_connection.test_connection()
+        await db_connection.test_query()
+        return {"success": True, "error": None}
     except Exception as e:
-        return {"status": "failed", "error": e}
-
-    finally:
-        if conn:
-            conn.close()
-        if cur:
-            cur.close()
+        return {"success": False, "error": e}

@@ -1,46 +1,50 @@
+import asyncio
+from contextlib import asynccontextmanager
+
 import snowflake.connector
 
 from wordome.infrastructure.database.database_config import settings
 
 
 class DatabaseConnection:
-    """Manages Snowflake database connection lifecycle"""
+    async def _run(self, fn, *args, **kwargs):
+        return await asyncio.to_thread(fn, *args, **kwargs)
 
-    def __init__(self):
-        self._connection = None
-
-    def get_connection(self):
-        """Get a Snowflake connection"""
-        print(f"SETTINGS: {settings}")
-        if self._connection is None or self._connection.is_closed():
-            self._connection = snowflake.connector.connect(
-                account=settings.account,
-                user=settings.user,
-                password=settings.password,
-                warehouse=settings.warehouse,
-                database=settings.database,
-                schema=settings.schema,
-            )
-            print(f"CONNECTION: {self._connection}")
-        return self._connection
-
-    def test_connection(self):
-        """Simple test to verify connection works"""
-        conn = self.get_connection()
-        cur = conn.cursor()
+    @asynccontextmanager
+    async def session(self):
+        conn = await self._run(
+            snowflake.connector.connect,
+            user=settings.user,
+            password=settings.password,
+            account=settings.account,
+            warehouse=settings.warehouse,
+            database=settings.database,
+            schema=settings.schema,
+        )
         try:
-            cur.execute("SELECT CURRENT_VERSION()")
-            version = cur.fetchone()[0]
-            print(f"✅ Connected! Snowflake version: {version}")
-            return True
-        except Exception as e:
-            print(f"❌ Connection failed: {e}")
-            return False
+            yield conn
         finally:
-            cur.close()
+            await self._run(conn.close)
 
-    def close(self):
-        """Close the connection"""
-        if self._connection and not self._connection.is_closed():
-            self._connection.close()
-            self._connection = None
+    async def test_connection(self):
+        """
+        Test Snowflake connectivity
+        Just open/close a connection
+        """
+        async with self.session():
+            print("Connection successful")
+
+    def _execute_fetchone(self, conn, sql: str):
+        with conn.cursor() as cur:
+            cur.execute(sql)
+            return cur.fetchone()
+
+    async def test_query(self):
+        """
+        Test example query
+        """
+        async with self.session() as conn:
+            row = await self._run(
+                self._execute_fetchone, conn, "SELECT 'hello world' AS message;"
+            )
+            print(row[0])
