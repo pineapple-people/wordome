@@ -12,7 +12,7 @@ review_detector = ReviewSectionDetector()
 
 def _get_repository() -> SnowflakeRepository:
     """
-    Create the Snowflake Repository
+    Instantiate Snowflake Repository instance
     """
     return SnowflakeRepository()
 

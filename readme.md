@@ -81,7 +81,6 @@ conda install -c conda-forge beautifulsoup4
 }
 ```
 
-
 ### Snowflake SQL - Credentials
 This app integrates with Snowflake SQL as its persistence layer and the credentials are read from a root `.env` file. The app expects these keys:
 
