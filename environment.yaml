@@ -8,6 +8,11 @@ dependencies:
   - ruff
   - fastapi
   - uvicorn
+  # SnowflakeSQL
+  - snowflake-connector-python>=3.7.0
+  - pyarrow>=15.0.0
+  - pydantic
+  - pydantic-settings
   - pip:
     - curl_cffi # not available in conda-forge channel
     - -e .  # installs project (and its TOML deps) into the conda env

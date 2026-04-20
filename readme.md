@@ -80,3 +80,18 @@ conda install -c conda-forge beautifulsoup4
     "files.autoSave": "onFocusChange"
 }
 ```
+
+### Snowflake SQL - Credentials
+This app integrates with Snowflake SQL as its persistence layer and the credentials are read from a root `.env` file. The app expects these keys:
+
+```env
+SNOWFLAKE_ACCOUNT=...
+SNOWFLAKE_USER=...
+SNOWFLAKE_PASSWORD=...
+SNOWFLAKE_DATABASE=...
+SNOWFLAKE_SCHEMA=PUBLIC
+SNOWFLAKE_WAREHOUSE=COMPUTE_WH
+```
+
+The repo includes a matching [`.env.example`](/Users/pototo/codebase/wordome/.env.example) template.
+Note: Provide actual credential values locally in `.env` file (avoid comitting this actual file)
