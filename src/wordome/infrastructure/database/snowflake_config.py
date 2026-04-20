@@ -3,17 +3,17 @@ from functools import lru_cache
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-class Settings(BaseSettings):
+class SnowflakeConfig(BaseSettings):
     account: str
     user: str
     password: str
-    warehouse: str = "COMPUTE_WH"
+    warehouse: str
     database: str
-    schema: str = "PUBLIC"
+    schema: str
 
     model_config = SettingsConfigDict(env_file=".env", env_prefix="SNOWFLAKE_")
 
 
 @lru_cache(maxsize=1)
-def get_settings() -> Settings:
-    return Settings()
+def get_snowflake_config() -> SnowflakeConfig:
+    return SnowflakeConfig()

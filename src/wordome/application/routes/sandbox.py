@@ -2,18 +2,19 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from wordome.domain import ReviewSectionDetector
-from wordome.infrastructure import DatabaseConnection, WebFetcher
+from wordome.infrastructure import WebFetcher
+from wordome.infrastructure.database.snowflake_repository import SnowflakeRepository
 
 router = APIRouter(prefix="/sandbox", tags=["sandbox"])
 web_fetcher = WebFetcher()
 review_detector = ReviewSectionDetector()
 
 
-def get_database_connection() -> DatabaseConnection:
+def _get_repository() -> SnowflakeRepository:
     """
-    Create the Snowflake database adapter used by sandbox endpoints.
+    Create the Snowflake Repository
     """
-    return DatabaseConnection()
+    return SnowflakeRepository()
 
 
 @router.get("/")
@@ -60,13 +61,21 @@ async def detect_reviews(request: FetchRequest):
 
 @router.get("/db/ping")
 async def db_ping(
-    db_connection: DatabaseConnection = Depends(get_database_connection),
+    sf_repository: SnowflakeRepository = Depends(_get_repository),
 ):
     """
     Verify the Snowflake connection can open and run a simple query.
     """
     try:
-        message = await db_connection.ping()
-        return {"success": True, "message": message, "error": None}
+        await sf_repository.health_check()
+        message = await sf_repository.ping()
+        warehouse_count = await sf_repository.get_warehouse_count()
+
+        return {
+            "success": True,
+            "message": message,
+            "warehouse_count": warehouse_count,
+            "error": None,
+        }
     except Exception as e:
         return {"success": False, "error": str(e)}
