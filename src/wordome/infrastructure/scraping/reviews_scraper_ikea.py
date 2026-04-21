@@ -18,16 +18,16 @@ from wordome.domain.reviews.models import (
 
 
 @contextmanager
-def trace_step(label: str):
+def trace_step(self, label: str):
     """
     Helper function to track/debug a specific step of the scraping proces
     """
     start = perf_counter()
-    print(f"[ikea] {label}")
+    self._log(f"→ {label}")
     try:
         yield
     finally:
-        print(f"[ikea] {label} took {perf_counter() - start:.2f}s")
+        self._log(f"↳ {label} completed in {perf_counter() - start:.2f}s")
 
 
 class ReviewsScraperIkea:
@@ -40,22 +40,33 @@ class ReviewsScraperIkea:
     capture the next page of reviews.
     """
 
+    # Browser and interaction defaults.
     DEFAULT_NAVIGATION_TIMEOUT_MS = 30_000
-    DEFAULT_WAIT_MS = 500
-    DEFAULT_MODAL_SETTLE_MS = 250
-    DEFAULT_MAX_LOAD_MORE_CLICKS = 50
-    INCLUDE_OTHER_COUNTRIES = False
     DEFAULT_USER_AGENT = (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/123.0.0.0 Safari/537.36"
     )
+    DEFAULT_MODAL_SETTLE_MS = 250
+    REVIEW_MODAL_PAGINATION_TIMEOUT_MS = 5_000
+    DEFAULT_MAX_LOAD_MORE_CLICKS = 20
 
+    # Feature toggles.
+    INCLUDE_OTHER_COUNTRIES = False
+
+    # Review card extraction selectors.
     REVIEW_CARD_SELECTORS = (
         ".ugc-rr-pip-fe-review",
         ".pipf-seo-reviews__review",
         "[class*='ugc-rr-pip-fe-reviews__review']",
     )
+    REVIEW_SUMMARY_SELECTOR = ".pipf-rating__sr-only"
+    REVIEW_TITLE_SELECTOR = ".ugc-rr-pip-fe-review__title, .pipf-seo-reviews__review-title, [class*='review-title']"
+    REVIEW_AUTHOR_SELECTOR = ".ugc-rr-pip-fe-reviewer-name, .pipf-seo-reviews__review-name, [class*='review-name']"
+    REVIEW_BODY_SELECTOR = ".ugc-rr-pip-fe-review__text, .pipf-seo-reviews__review-text, [class*='review-text']"
+    REVIEW_RATING_SELECTOR = ".ugc-rr-pip-fe-rating__stars, .pipf-seo-reviews__review-ratingValue, [class*='review-ratingValue']"
+
+    # Pagination / modal selectors.
     LOAD_MORE_SELECTORS = (
         "button:has-text('Load more')",
         "button:has-text('Load More')",
@@ -64,22 +75,14 @@ class ReviewsScraperIkea:
         ".ugc-rr-pip-fe-btn.ugc-rr-pip-fe-btn--small.ugc-rr-pip-fe-btn--secondary.ugc-rr-pip-fe-reviews__load-more__button",
         "button.ugc-rr-pip-fe-reviews__load-more__button",
     )
-    REVIEW_TITLE_SELECTOR = ".ugc-rr-pip-fe-review__title, .pipf-seo-reviews__review-title, [class*='review-title']"
-    REVIEW_AUTHOR_SELECTOR = ".ugc-rr-pip-fe-reviewer-name, .pipf-seo-reviews__review-name, [class*='review-name']"
-    REVIEW_BODY_SELECTOR = ".ugc-rr-pip-fe-review__text, .pipf-seo-reviews__review-text, [class*='review-text']"
-    REVIEW_RATING_SELECTOR = ".ugc-rr-pip-fe-rating__stars, .pipf-seo-reviews__review-ratingValue, [class*='review-ratingValue']"
-    REVIEW_SUMMARY_SELECTOR = ".pipf-rating__sr-only"
     REVIEW_MODAL_OPENERS = (
+        "div.js-ugc-container.pipf-ratings-and-qna > button.pipf-rating",
         "div.js-ugc-container.pipf-ratings-and-qna .pipf-rating",
         "div.js-ugc-container.pipf-ratings-and-qna button.pipf-rating",
         ".pipf-rating",
         "button:has-text('Show all reviews')",
         "button:has-text('Show reviews')",
         "button:has-text('Reviews')",
-    )
-    REVIEW_MODAL_READY_SELECTORS = (
-        "div.ugc-rr-pip-fe-modal-wrapper--open",
-        "div.ugc-rr-pip-fe-reviews__load-more",
     )
     REVIEW_ENTRY_SELECTORS = (
         *REVIEW_MODAL_OPENERS,
@@ -88,15 +91,19 @@ class ReviewsScraperIkea:
     )
     REVIEW_TABS = ("United States", "Other countries")
     REVIEW_API_MARKER = "web-api.ikea.com/tugc/public/v5/reviews/"
+    REVIEW_MODAL_PAGINATION_SELECTOR = "div.ugc-rr-pip-fe-reviews__load-more"
+
+    def _log(self, message: str) -> None:
+        print(f"[{self.__class__.__name__}] {message}")
 
     async def scrape(self, product_url: str) -> ReviewScrapeResult:
-        print(f"[ikea] scraping product page: {product_url}")
+        self._log(f"scraping product page: {product_url}")
         html: str | None = None
         collected_reviews: list[Review] = []
         seen_review_keys: set[tuple[str, str, str, str]] = set()
         scraped_tabs: list[str] = []
 
-        with trace_step("total scrape"):
+        with trace_step(self, "total scrape"):
             async with async_playwright() as playwright:
                 browser = await playwright.chromium.launch(headless=True)
                 context = await browser.new_context(
@@ -110,13 +117,13 @@ class ReviewsScraperIkea:
                 page = await context.new_page()
 
                 try:
-                    with trace_step("navigating to PDP"):
+                    with trace_step(self, "navigating to PDP"):
                         await self._goto(page, product_url)
 
-                    with trace_step("waiting for review entry point"):
+                    with trace_step(self, "discovering review entry point"):
                         await self._wait_for_reviews_entry_point(page)
 
-                    with trace_step("opening reviews modal"):
+                    with trace_step(self, "reviews modal open flow"):
                         await self._open_reviews_modal(
                             page,
                             product_url,
@@ -124,7 +131,7 @@ class ReviewsScraperIkea:
                             seen_review_keys,
                         )
 
-                    with trace_step("scraping United States tab"):
+                    with trace_step(self, "scraping reviews tab: United States"):
                         await self._scrape_active_modal_tab(
                             page,
                             product_url,
@@ -133,15 +140,15 @@ class ReviewsScraperIkea:
                             "United States",
                         )
                     scraped_tabs.append("United States")
-                    print(
-                        f"[ikea] United States tab complete; reviews captured so far: {len(collected_reviews)}"
+                    self._log(
+                        f"💡 reviews tab complete: United States; reviews captured so far: {len(collected_reviews)}"
                     )
                     if self.INCLUDE_OTHER_COUNTRIES:
                         # Optional: also scrape the regional "Other countries" tab.
                         additional_tabs = self.REVIEW_TABS[1:]
                         for tab_name in additional_tabs:
                             if await self._switch_review_tab(page, tab_name):
-                                print(f"[ikea] scraping tab: {tab_name}")
+                                self._log(f"💡 scraping tab: {tab_name}")
                                 await self._scrape_active_modal_tab(
                                     page,
                                     product_url,
@@ -178,67 +185,69 @@ class ReviewsScraperIkea:
         )
 
     async def _goto(self, page, product_url: str) -> None:
-        try:
-            print("[ikea] goto(commit)")
-            await page.goto(
-                product_url,
-                wait_until="commit",
-                timeout=self.DEFAULT_NAVIGATION_TIMEOUT_MS,
-            )
-        except Exception as e:
-            print(f"Error occurred: {e}")
-            print("[ikea] goto(commit) failed; retrying domcontentloaded")
-            await page.goto(
-                product_url,
-                wait_until="domcontentloaded",
-                timeout=self.DEFAULT_NAVIGATION_TIMEOUT_MS,
-            )
+        with trace_step(self, "opening product page in browser"):
+            try:
+                await page.goto(
+                    product_url,
+                    wait_until="commit",
+                    timeout=self.DEFAULT_NAVIGATION_TIMEOUT_MS,
+                )
+            except Exception as e:
+                self._log(f"↳ error occurred: {e}")
+                self._log(
+                    "↳ commit navigation failed; retrying page load via domcontentloaded"
+                )
+                await page.goto(
+                    product_url,
+                    wait_until="domcontentloaded",
+                    timeout=self.DEFAULT_NAVIGATION_TIMEOUT_MS,
+                )
 
     async def _wait_for_reviews_entry_point(self, page) -> None:
-        try:
-            print("[ikea] waiting for review selectors to appear")
-            await page.wait_for_selector(
-                ", ".join(self.REVIEW_ENTRY_SELECTORS),
-                timeout=5_000,
-            )
-        except PlaywrightTimeoutError:
-            print("[ikea] review entry point not found quickly; continuing")
+        with trace_step(self, "checking for review entry point in page shell"):
+            try:
+                await page.wait_for_selector(
+                    ", ".join(self.REVIEW_ENTRY_SELECTORS),
+                    timeout=5_000,
+                )
+            except PlaywrightTimeoutError:
+                self._log("↳ review entry point not found quickly; continuing")
 
     async def _expand_all_reviews(
         self,
         page,
     ) -> None:
         for click_index in range(self.DEFAULT_MAX_LOAD_MORE_CLICKS):
-            print(f"[ikea] load-more iteration {click_index + 1}")
+            self._log(f"↳ load-more iteration {click_index + 1}")
             await self._nudge_reviews_panel(page)
             button = await self._find_load_more_button(page)
             if button is None:
-                print("[ikea] no load more button found; stopping pagination")
+                self._log("↳ no load more button found; stopping pagination")
                 break
 
             try:
                 await button.scroll_into_view_if_needed(timeout=5_000)
             except Exception as e:
-                print(f"Error occurred: {e}")
+                self._log(f"↳ error occurred: {e}")
 
             try:
                 async with page.expect_response(
                     lambda response: self.REVIEW_API_MARKER in response.url.lower(),
                     timeout=self.DEFAULT_NAVIGATION_TIMEOUT_MS,
                 ):
-                    print("[ikea] clicking load more")
+                    self._log("↳ clicking load more")
                     await button.click(timeout=self.DEFAULT_NAVIGATION_TIMEOUT_MS)
             except Exception as e:
-                print(f"Error occurred: {e}")
-                print("[ikea] load-more click failed or no matching response; stopping")
+                self._log("↳ load-more click failed or no matching response; stopping")
+                self._log(f"↳ error occurred: {e}")
                 break
 
             try:
-                print("[ikea] waiting for modal to settle after pagination")
+                self._log("↳ waiting for modal to settle after pagination")
                 await page.wait_for_timeout(self.DEFAULT_MODAL_SETTLE_MS)
             except Exception as e:
-                print(f"Error occurred: {e}")
-                print("[ikea] post-click settle failed; stopping")
+                self._log("↳ post-click settle failed; stopping")
+                self._log(f"↳ error occurred: {e}")
                 break
 
     async def _scrape_active_modal_tab(
@@ -249,17 +258,17 @@ class ReviewsScraperIkea:
         seen_review_keys: set[tuple[str, str, str, str]],
         tab_name: str,
     ) -> None:
-        print(f"[ikea] harvesting tab snapshot: {tab_name}")
-        with trace_step(f"load-more pagination for {tab_name}"):
+        self._log(f"↳ capturing current tab state: {tab_name}")
+        with trace_step(self, f"load-more pagination for {tab_name}"):
             await self._expand_all_reviews(page)
-        print(f"[ikea] load-more exhausted for tab: {tab_name}")
-        with trace_step(f"extracting review cards for {tab_name}"):
+        self._log(f"↳ load-more pagination exhausted for {tab_name}")
+        with trace_step(self, f"extracting review cards for {tab_name}"):
             await self._harvest_current_reviews(
                 page,
                 product_url,
                 collected_reviews,
                 seen_review_keys,
-                f"{tab_name} final",
+                f"{tab_name} final snapshot",
             )
 
     async def _switch_review_tab(self, page, tab_name: str) -> bool:
@@ -274,7 +283,7 @@ class ReviewsScraperIkea:
             await page.wait_for_timeout(self.DEFAULT_MODAL_SETTLE_MS)
             return True
         except Exception as e:
-            print(f"Error occurred: {e}")
+            self._log(f"↳ error occurred: {e}")
             return False
 
     async def _open_reviews_modal(
@@ -288,46 +297,42 @@ class ReviewsScraperIkea:
         Open the IKEA reviews modal / expanded review view if a trigger is present.
         """
         for selector in self.REVIEW_MODAL_OPENERS:
-            selector_start = perf_counter()
-            locator = page.locator(selector)
-            count = await locator.count()
-            if count == 0:
-                print(
-                    f"[ikea] opener selector skipped (no matches): {selector} "
-                    f"after {perf_counter() - selector_start:.2f}s"
-                )
-                continue
+            with trace_step(self, f"selector: {selector}"):
+                locator = page.locator(selector)
+                count = await locator.count()
+                if count == 0:
+                    self._log("↳ no matches")
+                    continue
 
-            try:
-                for index in range(count):
-                    opener = locator.nth(index)
-                    try:
-                        if not await opener.is_visible():
+                try:
+                    for index in range(count):
+                        opener = locator.nth(index)
+                        try:
+                            if not await opener.is_visible():
+                                continue
+                            await opener.scroll_into_view_if_needed(timeout=5_000)
+                            await opener.click(
+                                timeout=self.DEFAULT_NAVIGATION_TIMEOUT_MS
+                            )
+                            await self._wait_for_reviews_modal_ready(page)
+                            self._log("↳ opener selector success")
+                            return
+                        except PlaywrightTimeoutError:
+                            self._log("↳ timed out waiting for modal pagination")
                             continue
-                        print(f"[ikea] trying opener selector: {selector}")
-                        await opener.scroll_into_view_if_needed(timeout=5_000)
-                        await opener.click(timeout=self.DEFAULT_NAVIGATION_TIMEOUT_MS)
-                        await page.wait_for_selector(
-                            ", ".join(self.REVIEW_MODAL_READY_SELECTORS),
-                            timeout=8_000,
-                        )
-                        await page.wait_for_timeout(150)
-                        print(
-                            f"[ikea] opened reviews modal via: {selector} "
-                            f"in {perf_counter() - selector_start:.2f}s"
-                        )
-                        return
-                    except Exception as e:
-                        print(f"Error occurred: {e}")
-                        continue
-            except Exception as e:
-                print(f"Error occurred: {e}")
-                continue
+                        except Exception as e:
+                            self._log(f"↳ opener selector failed: error={e}")
+                            continue
+                except Exception as e:
+                    self._log(f"↳ opener selector failed: error={e}")
+                    continue
 
-            print(
-                f"[ikea] opener selector exhausted without success: {selector} "
-                f"after {perf_counter() - selector_start:.2f}s"
-            )
+    async def _wait_for_reviews_modal_ready(self, page) -> None:
+        await page.wait_for_selector(
+            self.REVIEW_MODAL_PAGINATION_SELECTOR,
+            state="visible",
+            timeout=self.REVIEW_MODAL_PAGINATION_TIMEOUT_MS,
+        )
 
     async def _find_load_more_button(self, page):
         for selector in self.LOAD_MORE_SELECTORS:
@@ -344,7 +349,7 @@ class ReviewsScraperIkea:
                     if await button.is_disabled():
                         continue
                 except Exception as e:
-                    print(f"Error occurred: {e}")
+                    self._log(f"↳ error occurred: {e}")
                     continue
                 return button
 
@@ -365,13 +370,13 @@ class ReviewsScraperIkea:
                 await page.wait_for_timeout(500)
                 return
             except Exception as e:
-                print(f"Error occurred: {e}")
+                self._log(f"Error occurred: {e}")
 
         for _ in range(3):
             try:
                 await page.mouse.wheel(0, 1800)
             except Exception as e:
-                print(f"Error occurred: {e}")
+                self._log(f"Error occurred: {e}")
                 break
             await page.wait_for_timeout(300)
 
@@ -387,11 +392,11 @@ class ReviewsScraperIkea:
         seen_review_keys: set[tuple[str, str, str, str]],
         stage: str,
     ) -> int:
-        with trace_step(f"capturing DOM for {stage}"):
+        with trace_step(self, f"capturing DOM for {stage}"):
             html = await page.content()
             soup = BeautifulSoup(html, "html.parser")
             reviews = self._extract_reviews(soup, source_url=product_url)
-            print(f"[ikea] parsed {len(reviews)} review candidates from DOM")
+            self._log(f"💡 parsed {len(reviews)} review candidates from DOM")
 
             new_reviews = 0
             for review in reviews:
@@ -401,7 +406,7 @@ class ReviewsScraperIkea:
                 seen_review_keys.add(key)
                 collected_reviews.append(review)
                 new_reviews += 1
-            print(f"[ikea] {stage}: added {new_reviews} new reviews")
+            self._log(f"💡 {stage}: added {new_reviews} new reviews")
             return new_reviews
 
     def _extract_summary(self, soup: BeautifulSoup) -> str | None:
