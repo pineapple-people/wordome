@@ -8,6 +8,7 @@ from playwright.async_api import (
 
 from wordome.domain.review_models import (
     Review,
+    ReviewScrapeDomainMetadata,
     ReviewScrapeMetadata,
     ReviewScrapeResult,
     ReviewSource,
@@ -25,8 +26,8 @@ class IkeaReviewsScraper:
     """
 
     DEFAULT_NAVIGATION_TIMEOUT_MS = 30_000
-    DEFAULT_WAIT_MS = 750
-    DEFAULT_MODAL_SETTLE_MS = 500
+    DEFAULT_WAIT_MS = 500
+    DEFAULT_MODAL_SETTLE_MS = 250
     DEFAULT_MAX_LOAD_MORE_CLICKS = 50
     INCLUDE_OTHER_COUNTRIES = False
     DEFAULT_USER_AGENT = (
@@ -63,11 +64,10 @@ class IkeaReviewsScraper:
     REVIEW_API_MARKER = "web-api.ikea.com/tugc/public/v5/reviews/"
 
     async def scrape(self, product_url: str) -> ReviewScrapeResult:
-        captured_notes: list[str] = []
-        captured_review_api_urls: list[str] = []
         html: str | None = None
         collected_reviews: list[Review] = []
         seen_review_keys: set[tuple[str, str, str, str]] = set()
+        scraped_tabs: list[str] = []
 
         async with async_playwright() as playwright:
             browser = await playwright.chromium.launch(headless=True)
@@ -81,13 +81,7 @@ class IkeaReviewsScraper:
             )
             page = await context.new_page()
 
-            def on_request(request):
-                url = request.url
-                if self.REVIEW_API_MARKER in url.lower():
-                    captured_review_api_urls.append(url)
-
             try:
-                page.on("request", on_request)
                 await self._goto(page, product_url)
                 await self._wait_for_reviews_shell(page)
                 await self._open_reviews_modal(
@@ -95,16 +89,15 @@ class IkeaReviewsScraper:
                     product_url,
                     collected_reviews,
                     seen_review_keys,
-                    captured_notes,
                 )
                 await self._scrape_active_modal_tab(
                     page,
                     product_url,
                     collected_reviews,
                     seen_review_keys,
-                    captured_notes,
                     "United States",
                 )
+                scraped_tabs.append("United States")
                 if self.INCLUDE_OTHER_COUNTRIES:
                     # Toggle this on when you want to merge the regional tab too.
                     for tab_name in self.REVIEW_TABS[1:]:
@@ -114,9 +107,9 @@ class IkeaReviewsScraper:
                                 product_url,
                                 collected_reviews,
                                 seen_review_keys,
-                                captured_notes,
                                 tab_name,
                             )
+                            scraped_tabs.append(tab_name)
                 html = await page.content()
             finally:
                 await context.close()
@@ -128,32 +121,19 @@ class IkeaReviewsScraper:
                 review_page_url=product_url,
                 reviews_count=None,
                 metadata=ReviewScrapeMetadata(
-                    notes=["Failed to fetch IKEA PDP HTML."],
+                    domain_metadata=ReviewScrapeDomainMetadata(),
                 ),
             )
-
-        soup = BeautifulSoup(html, "html.parser")
-        summary = self._extract_summary(soup)
-        reviews_count = self._extract_reviews_count(soup)
-        notes: list[str] = []
-        if summary:
-            notes.append(summary)
-        if captured_review_api_urls:
-            notes.append(
-                f"Observed IKEA review API calls: {len(captured_review_api_urls)}"
-            )
-        notes.extend(captured_notes)
-        if not collected_reviews:
-            notes.append("No IKEA review cards were extracted from the HTML.")
 
         return ReviewScrapeResult(
             product_url=product_url,
             review_page_url=product_url,
-            reviews_count=reviews_count if reviews_count is not None else len(collected_reviews),
+            reviews_count=len(collected_reviews),
             reviews=collected_reviews,
             metadata=ReviewScrapeMetadata(
-                captured_review_api_urls=self._dedupe_strings(captured_review_api_urls),
-                notes=notes,
+                domain_metadata=ReviewScrapeDomainMetadata(
+                    review_tabs=self._dedupe_strings(scraped_tabs)
+                ),
             ),
         )
 
@@ -183,10 +163,6 @@ class IkeaReviewsScraper:
     async def _expand_all_reviews(
         self,
         page,
-        product_url: str,
-        collected_reviews: list[Review],
-        seen_review_keys: set[tuple[str, str, str, str]],
-        notes: list[str],
     ) -> None:
         for _ in range(self.DEFAULT_MAX_LOAD_MORE_CLICKS):
             await self._nudge_reviews_panel(page)
@@ -211,22 +187,8 @@ class IkeaReviewsScraper:
 
             try:
                 await page.wait_for_timeout(self.DEFAULT_MODAL_SETTLE_MS)
-                new_reviews = await self._harvest_current_reviews(
-                    page,
-                    product_url,
-                    collected_reviews,
-                    seen_review_keys,
-                    notes,
-                    "pagination",
-                )
             except Exception as exc:
                 notes.append(f"Stopped while waiting for additional reviews: {exc}")
-                break
-
-            if new_reviews == 0:
-                notes.append(
-                    "Load more exhausted: the next review page produced no new cards."
-                )
                 break
 
     async def _scrape_active_modal_tab(
@@ -235,24 +197,15 @@ class IkeaReviewsScraper:
         product_url: str,
         collected_reviews: list[Review],
         seen_review_keys: set[tuple[str, str, str, str]],
-        notes: list[str],
         tab_name: str,
     ) -> None:
-        notes.append(f"Scraping IKEA review tab: {tab_name}")
+        await self._expand_all_reviews(page)
         await self._harvest_current_reviews(
             page,
             product_url,
             collected_reviews,
             seen_review_keys,
-            notes,
-            f"{tab_name} initial",
-        )
-        await self._expand_all_reviews(
-            page,
-            product_url,
-            collected_reviews,
-            seen_review_keys,
-            notes,
+            f"{tab_name} final",
         )
 
     async def _switch_review_tab(self, page, tab_name: str) -> bool:
@@ -275,7 +228,6 @@ class IkeaReviewsScraper:
         product_url: str,
         collected_reviews: list[Review],
         seen_review_keys: set[tuple[str, str, str, str]],
-        notes: list[str],
     ) -> None:
         """
         Open the IKEA reviews modal / expanded review view if a trigger is present.
@@ -298,12 +250,9 @@ class IkeaReviewsScraper:
                         timeout=self.DEFAULT_NAVIGATION_TIMEOUT_MS,
                     )
                     await page.wait_for_timeout(self.DEFAULT_MODAL_SETTLE_MS)
-                    notes.append(f"Opened reviews modal via: {selector}")
                     return
                 except Exception:
                     continue
-
-        notes.append("No explicit reviews modal opener was found.")
 
     async def _find_load_more_button(self, page):
         for selector in self.LOAD_MORE_SELECTORS:
@@ -359,7 +308,6 @@ class IkeaReviewsScraper:
         product_url: str,
         collected_reviews: list[Review],
         seen_review_keys: set[tuple[str, str, str, str]],
-        notes: list[str],
         stage: str,
     ) -> int:
         html = await page.content()
@@ -374,8 +322,6 @@ class IkeaReviewsScraper:
             seen_review_keys.add(key)
             collected_reviews.append(review)
             new_reviews += 1
-
-        notes.append(f"Captured {new_reviews} new reviews during {stage} snapshot.")
         return new_reviews
 
     def _extract_summary(self, soup: BeautifulSoup) -> str | None:
@@ -394,18 +340,6 @@ class IkeaReviewsScraper:
             return f"Review: {rating} out of 5 stars. Total reviews: {count}"
 
         return None
-
-    def _extract_reviews_count(self, soup: BeautifulSoup) -> int | None:
-        summary_node = soup.select_one(self.REVIEW_SUMMARY_SELECTOR)
-        text = summary_node.get_text(" ", strip=True) if summary_node else ""
-        if not text:
-            text = soup.get_text(" ", strip=True)
-
-        match = re.search(r"Total reviews:\s*([0-9,]+)", text)
-        if not match:
-            return None
-
-        return int(match.group(1).replace(",", ""))
 
     def _extract_reviews(
         self, soup: BeautifulSoup, source_url: str | None
