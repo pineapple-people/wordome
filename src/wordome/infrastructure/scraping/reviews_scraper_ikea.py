@@ -1,5 +1,6 @@
 import re
 from contextlib import contextmanager
+from contextvars import ContextVar
 from time import perf_counter
 
 from bs4 import BeautifulSoup
@@ -7,6 +8,8 @@ from playwright.async_api import (
     TimeoutError as PlaywrightTimeoutError,
     async_playwright,
 )
+from rich.console import Console
+from rich.text import Text
 
 from wordome.domain.reviews.models import (
     Review,
@@ -17,17 +20,140 @@ from wordome.domain.reviews.models import (
 )
 
 
-@contextmanager
-def trace_step(self, label: str):
+class _RichTraceLogger:
     """
-    Helper function to track/debug a specific step of the scraping proces
+    Lightweight rich-backed tracer that renders nested steps as a tree.
     """
-    start = perf_counter()
-    self._log(f"→ {label}")
-    try:
-        yield
-    finally:
-        self._log(f"↳ {label} completed in {perf_counter() - start:.2f}s")
+
+    def __init__(self, scope: str):
+        self.scope = scope
+        self.console = Console(stderr=True, highlight=False, soft_wrap=True)
+        self._depth = 0
+
+    def _indent(self, depth: int | None = None) -> str:
+        depth = self._depth if depth is None else depth
+        if depth <= 0:
+            return ""
+        return "│   " * (depth - 1) + "├── "
+
+    def _render(self, message: str, style: str, depth: int | None = None) -> None:
+        text = Text()
+        text.append(self.scope, style="dim")
+        text.append(" ", style="dim")
+        text.append(self._indent(depth), style="dim")
+        text.append(message, style=style)
+        self.console.print(text)
+
+    def _render_callout(
+        self,
+        label: str,
+        value: str,
+        depth: int | None = None,
+        label_style: str = "bold cyan",
+        value_style: str = "bold #a855f7",
+    ) -> None:
+        text = Text()
+        text.append(self.scope, style="dim")
+        text.append(" ", style="dim")
+        text.append(self._indent(depth), style="dim")
+        text.append(label, style=label_style)
+        text.append(": ", style="dim")
+        text.append(value, style=value_style)
+        self.console.print(text)
+
+    def _render_status(
+        self,
+        label: str,
+        status: str,
+        status_style: str,
+        depth: int | None = None,
+        detail_label: str | None = None,
+        detail_value: str | None = None,
+        detail_label_style: str = "bold #ff8ad6",
+        detail_value_style: str = "bold #ff8ad6",
+    ) -> None:
+        text = Text()
+        text.append(self.scope, style="dim")
+        text.append(" ", style="dim")
+        text.append(self._indent(depth), style="dim")
+        text.append(label, style="bold cyan")
+        text.append("  ", style="dim")
+        text.append(f"[{status}]", style=status_style)
+        if detail_label and detail_value:
+            text.append("  ", style="dim")
+            text.append(f"[{detail_label}", style=detail_label_style)
+            text.append(" ", style="dim")
+            text.append(detail_value, style=detail_value_style)
+            text.append("]", style=detail_label_style)
+        self.console.print(text)
+
+    def log(self, message: str) -> None:
+        self._render(message, "white")
+
+    def info(self, message: str) -> None:
+        self._render(message, "cyan")
+
+    def warn(self, message: str) -> None:
+        self._render(message, "yellow")
+
+    def error(self, message: str) -> None:
+        self._render(message, "bold red")
+
+    def callout(
+        self,
+        label: str,
+        value: str,
+        depth: int | None = None,
+        label_style: str = "bold cyan",
+        value_style: str = "bold magenta",
+    ) -> None:
+        self._render_callout(
+            label,
+            value,
+            depth=depth,
+            label_style=label_style,
+            value_style=value_style,
+        )
+
+    @contextmanager
+    def step(self, label: str):
+        start = perf_counter()
+        depth = self._depth
+        self._render(label, "bold cyan", depth=depth)
+        self._depth += 1
+        try:
+            yield
+        except Exception as exc:
+            elapsed = perf_counter() - start
+            self._depth -= 1
+            self._render_status(
+                label,
+                "failed",
+                "bold red",
+                depth=depth,
+                detail_label="after",
+                detail_value=f"{elapsed:.2f}s: {exc}",
+                detail_value_style="bold red",
+            )
+            raise
+        else:
+            elapsed = perf_counter() - start
+            self._depth -= 1
+            self._render_status(
+                label,
+                "done",
+                "green",
+                depth=depth,
+                detail_label="runtime:",
+                detail_value=f"{elapsed:.2f}s",
+                detail_value_style="bold green",
+            )
+
+
+_TRACE_CONTEXT: ContextVar[_RichTraceLogger | None] = ContextVar(
+    "reviews_scraper_ikea_trace",
+    default=None,
+)
 
 
 class ReviewsScraperIkea:
@@ -92,70 +218,81 @@ class ReviewsScraperIkea:
     # REVIEW_API_MARKER = "web-api.ikea.com/tugc/public/v5/reviews/"
     REVIEW_MODAL_PAGINATION_SELECTOR = "div.ugc-rr-pip-fe-reviews__load-more"
 
+    def __init__(self) -> None:
+        self._default_trace = _RichTraceLogger(self.__class__.__name__)
+
+    @property
+    def _trace(self) -> _RichTraceLogger:
+        return _TRACE_CONTEXT.get() or self._default_trace
+
     def _log(self, message: str) -> None:
-        print(f"[{self.__class__.__name__}] {message}")
+        self._trace.log(message)
 
     async def scrape(self, product_url: str) -> ReviewScrapeResult:
-        self._log(f"scraping product page: {product_url}")
+        trace = _RichTraceLogger(self.__class__.__name__)
+        token = _TRACE_CONTEXT.set(trace)
+        trace.info(f"scraping product page: {product_url}")
         html: str | None = None
         collected_reviews: list[Review] = []
         scraped_tabs: list[str] = []
 
-        with trace_step(self, "total scrape"):
-            async with async_playwright() as playwright:
-                browser = await playwright.chromium.launch(headless=True)
-                context = await browser.new_context(
-                    viewport={"width": 1440, "height": 1800},
-                    locale="en-US",
-                    user_agent=self.DEFAULT_USER_AGENT,
-                    ignore_https_errors=True,
-                    java_script_enabled=True,
-                    extra_http_headers={"Accept-Language": "en-US,en;q=0.9"},
-                )
-                page = await context.new_page()
+        try:
+            with trace.step("total scrape"):
+                async with async_playwright() as playwright:
+                    browser = await playwright.chromium.launch(headless=True)
+                    context = await browser.new_context(
+                        viewport={"width": 1440, "height": 1800},
+                        locale="en-US",
+                        user_agent=self.DEFAULT_USER_AGENT,
+                        ignore_https_errors=True,
+                        java_script_enabled=True,
+                        extra_http_headers={"Accept-Language": "en-US,en;q=0.9"},
+                    )
+                    page = await context.new_page()
 
-                try:
-                    with trace_step(self, "navigating to PDP"):
+                    try:
                         await self._goto(page, product_url)
 
-                    with trace_step(self, "discovering review entry point"):
-                        await self._wait_for_reviews_entry_point(page)
+                        with self._trace.step("discovering review entry point"):
+                            await self._wait_for_reviews_entry_point(page)
 
-                    with trace_step(self, "reviews modal open flow"):
-                        await self._open_reviews_modal(
-                            page,
-                            product_url,
-                            collected_reviews,
-                        )
+                        with self._trace.step("reviews modal open flow"):
+                            await self._open_reviews_modal(
+                                page,
+                                product_url,
+                                collected_reviews,
+                            )
 
-                    with trace_step(self, "scraping reviews tab: United States"):
-                        await self._scrape_active_modal_tab(
-                            page,
-                            product_url,
-                            collected_reviews,
-                            "United States",
+                        with self._trace.step("scraping reviews tab: United States"):
+                            await self._scrape_active_modal_tab(
+                                page,
+                                product_url,
+                                collected_reviews,
+                                "United States",
+                            )
+                        scraped_tabs.append("United States")
+                        self._trace.info(
+                            f"reviews tab complete: United States; reviews captured so far: {len(collected_reviews)}"
                         )
-                    scraped_tabs.append("United States")
-                    self._log(
-                        f"💡 reviews tab complete: United States; reviews captured so far: {len(collected_reviews)}"
-                    )
-                    if self.INCLUDE_OTHER_COUNTRIES:
-                        # Optional: also scrape the regional "Other countries" tab.
-                        additional_tabs = self.REVIEW_TABS[1:]
-                        for tab_name in additional_tabs:
-                            if await self._switch_review_tab(page, tab_name):
-                                self._log(f"💡 scraping tab: {tab_name}")
-                                await self._scrape_active_modal_tab(
-                                    page,
-                                    product_url,
-                                    collected_reviews,
-                                    tab_name,
-                                )
-                                scraped_tabs.append(tab_name)
-                    html = await page.content()
-                finally:
-                    await context.close()
-                    await browser.close()
+                        if self.INCLUDE_OTHER_COUNTRIES:
+                            # Optional: also scrape the regional "Other countries" tab.
+                            additional_tabs = self.REVIEW_TABS[1:]
+                            for tab_name in additional_tabs:
+                                if await self._switch_review_tab(page, tab_name):
+                                    self._trace.info(f"scraping tab: {tab_name}")
+                                    await self._scrape_active_modal_tab(
+                                        page,
+                                        product_url,
+                                        collected_reviews,
+                                        tab_name,
+                                    )
+                                    scraped_tabs.append(tab_name)
+                        html = await page.content()
+                    finally:
+                        await context.close()
+                        await browser.close()
+        finally:
+            _TRACE_CONTEXT.reset(token)
 
         if not html:
             return ReviewScrapeResult(
@@ -180,7 +317,7 @@ class ReviewsScraperIkea:
         )
 
     async def _goto(self, page, product_url: str) -> None:
-        with trace_step(self, "opening product page in browser"):
+        with self._trace.step("opening product page in browser"):
             try:
                 await page.goto(
                     product_url,
@@ -188,9 +325,9 @@ class ReviewsScraperIkea:
                     timeout=self.DEFAULT_NAVIGATION_TIMEOUT_MS,
                 )
             except Exception as e:
-                self._log(f"↳ error occurred: {e}")
-                self._log(
-                    "↳ commit navigation failed; retrying page load via domcontentloaded"
+                self._trace.error(f"navigation failed: {e}")
+                self._trace.warn(
+                    "commit navigation failed; retrying page load via domcontentloaded"
                 )
                 await page.goto(
                     product_url,
@@ -199,46 +336,46 @@ class ReviewsScraperIkea:
                 )
 
     async def _wait_for_reviews_entry_point(self, page) -> None:
-        with trace_step(self, "checking for review entry point in page shell"):
+        with self._trace.step("checking for review entry point in page shell"):
             try:
                 await page.wait_for_selector(
                     ", ".join(self.REVIEW_ENTRY_SELECTORS),
                     timeout=5_000,
                 )
             except PlaywrightTimeoutError:
-                self._log("↳ review entry point not found quickly; continuing")
+                self._trace.warn("review entry point not found quickly; continuing")
 
     async def _expand_all_reviews(
         self,
         page,
     ) -> None:
         for click_index in range(self.DEFAULT_MAX_LOAD_MORE_CLICKS):
-            self._log(f"↳ load-more iteration {click_index + 1}")
+            self._trace.info(f"load-more iteration {click_index + 1}")
             await self._nudge_reviews_panel(page)
             button = await self._find_load_more_button(page)
             if button is None:
-                self._log("↳ no load more button found; stopping pagination")
+                self._trace.warn("no load more button found; stopping pagination")
                 break
 
             try:
                 await button.scroll_into_view_if_needed(timeout=5_000)
             except Exception as e:
-                self._log(f"↳ error occurred: {e}")
+                self._trace.error(f"scroll into view failed: {e}")
 
             try:
-                self._log("↳ clicking load more")
+                self._trace.info("click load more")
                 await button.click(timeout=self.DEFAULT_NAVIGATION_TIMEOUT_MS)
             except Exception as e:
-                self._log("↳ load-more click failed; stopping")
-                self._log(f"↳ error occurred: {e}")
+                self._trace.warn("load-more click failed; stopping")
+                self._trace.error(f"click failed: {e}")
                 break
 
             try:
-                self._log("↳ waiting for modal to settle after pagination")
+                self._trace.info("wait for modal to settle after pagination")
                 await page.wait_for_timeout(self.DEFAULT_MODAL_SETTLE_MS)
             except Exception as e:
-                self._log("↳ post-click settle failed; stopping")
-                self._log(f"↳ error occurred: {e}")
+                self._trace.warn("post-click settle failed; stopping")
+                self._trace.error(f"settle wait failed: {e}")
                 break
 
     async def _scrape_active_modal_tab(
@@ -248,11 +385,11 @@ class ReviewsScraperIkea:
         collected_reviews: list[Review],
         tab_name: str,
     ) -> None:
-        self._log(f"↳ capturing current tab state: {tab_name}")
-        with trace_step(self, f"load-more pagination for {tab_name}"):
+        self._trace.info(f"capturing current tab state: {tab_name}")
+        with self._trace.step(f"load-more pagination for {tab_name}"):
             await self._expand_all_reviews(page)
-        self._log(f"↳ load-more pagination exhausted for {tab_name}")
-        with trace_step(self, f"extracting review cards for {tab_name}"):
+        self._trace.info(f"load-more pagination exhausted for {tab_name}")
+        with self._trace.step(f"extracting review cards for {tab_name}"):
             await self._capture_html_snapshot(
                 page,
                 product_url,
@@ -272,7 +409,7 @@ class ReviewsScraperIkea:
             await page.wait_for_timeout(self.DEFAULT_MODAL_SETTLE_MS)
             return True
         except Exception as e:
-            self._log(f"↳ error occurred: {e}")
+            self._trace.error(f"tab switch failed: {e}")
             return False
 
     async def _open_reviews_modal(
@@ -285,11 +422,12 @@ class ReviewsScraperIkea:
         Open the IKEA reviews modal / expanded review view if a trigger is present.
         """
         for selector in self.REVIEW_MODAL_OPENERS:
-            with trace_step(self, f"selector: {selector}"):
+            with self._trace.step("selector probe"):
+                self._trace.callout("selector", selector)
                 locator = page.locator(selector)
                 count = await locator.count()
                 if count == 0:
-                    self._log("↳ no matches")
+                    self._trace.warn("no matches")
                     continue
 
                 try:
@@ -303,16 +441,16 @@ class ReviewsScraperIkea:
                                 timeout=self.DEFAULT_NAVIGATION_TIMEOUT_MS
                             )
                             await self._wait_for_reviews_modal_ready(page)
-                            self._log("↳ opener selector success")
+                            self._trace.info("matched visible opener")
                             return
                         except PlaywrightTimeoutError:
-                            self._log("↳ timed out waiting for modal pagination")
+                            self._trace.warn("timed out waiting for modal readiness")
                             continue
                         except Exception as e:
-                            self._log(f"↳ opener selector failed: error={e}")
+                            self._trace.error(f"selector click failed: {e}")
                             continue
                 except Exception as e:
-                    self._log(f"↳ opener selector failed: error={e}")
+                    self._trace.error(f"selector probe failed: {e}")
                     continue
 
     async def _wait_for_reviews_modal_ready(self, page) -> None:
@@ -337,7 +475,7 @@ class ReviewsScraperIkea:
                     if await button.is_disabled():
                         continue
                 except Exception as e:
-                    self._log(f"↳ error occurred: {e}")
+                    self._trace.error(f"load-more control probe failed: {e}")
                     continue
                 return button
 
@@ -358,13 +496,13 @@ class ReviewsScraperIkea:
                 await page.wait_for_timeout(500)
                 return
             except Exception as e:
-                self._log(f"Error occurred: {e}")
+                self._trace.error(f"modal content scroll failed: {e}")
 
         for _ in range(3):
             try:
                 await page.mouse.wheel(0, 1800)
             except Exception as e:
-                self._log(f"Error occurred: {e}")
+                self._trace.error(f"mouse wheel failed: {e}")
                 break
             await page.wait_for_timeout(300)
 
@@ -375,14 +513,14 @@ class ReviewsScraperIkea:
         collected_reviews: list[Review],
         stage: str,
     ) -> int:
-        with trace_step(self, f"capturing HTML snapshot for {stage}"):
+        with self._trace.step(f"capturing HTML snapshot for {stage}"):
             html = await page.content()
             soup = BeautifulSoup(html, "html.parser")
             reviews = self._extract_reviews(soup, source_url=product_url)
-            self._log(f"💡 parsed {len(reviews)} review candidates from DOM")
+            self._trace.info(f"parsed {len(reviews)} review candidates from DOM")
 
             collected_reviews.extend(reviews)
-            self._log(f"💡 {stage}: added {len(reviews)} reviews")
+            self._trace.info(f"{stage}: added {len(reviews)} reviews")
             return len(reviews)
 
     def _extract_summary(self, soup: BeautifulSoup) -> str | None:
