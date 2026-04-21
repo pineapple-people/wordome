@@ -1,10 +1,10 @@
 from .database.snowflake_connection import SnowflakeConnection
 from .database.snowflake_repository import SnowflakeRepository
-from .scraping.ikea_reviews_scraper import IkeaReviewsScraper
+from .scraping.reviews_scraper_ikea import ReviewsScraperIkea
 from .scraping.web_fetcher import WebFetcher
 
 __all__ = [
-    "IkeaReviewsScraper",
+    "ReviewsScraperIkea",
     "SnowflakeConnection",
     "SnowflakeRepository",
     "WebFetcher",

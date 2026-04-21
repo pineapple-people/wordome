@@ -16,7 +16,6 @@ class ReviewSectionDetector:
     Simple detector to check if HTML has a user review section.
     """
 
-    # Simple list of words that suggest reviews
     REVIEW_KEYWORDS = [
         "review",
         "rating",
@@ -31,25 +30,16 @@ class ReviewSectionDetector:
     ]
 
     def process(self, html_content: str) -> ReviewDetectionResult:
-        """
-        Detect if HTML contains a review section
-        """
-        # 1. Parse HTML
         soup = BeautifulSoup(html_content, "html.parser")
-
-        # 2. Get all text
         page_text = soup.get_text(" ", strip=True).lower()
 
-        # 3. Count review keywords
         matched_words = []
         for keyword in self.REVIEW_KEYWORDS:
             if keyword in page_text:
                 matched_words.append(keyword)
 
         score = len(matched_words)
-
-        # 4. Determine result
-        has_reviews = score >= 3  # At least 3 review-related words
+        has_reviews = score >= 3
         confidence = self._get_confidence(score)
 
         return ReviewDetectionResult(

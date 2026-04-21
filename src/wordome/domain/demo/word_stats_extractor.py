@@ -19,36 +19,18 @@ class WordStats:
 
 class WordStatsExtractor:
     """
-    Extracts top N most frequent words from HTML content with frequency statistics
-    Note: example to demonstrate basic functionality with BeautifulSoup
+    Extracts top N most frequent words from HTML content with frequency statistics.
     """
 
     DEFAULT_TOP_N = 10
     DEFAULT_MIN_WORD_LENGTH = 3
     DEFAULT_IGNORE_WORDS = []
 
-    """
-    Responsible for extracting numerical insights from raw text
-    Extracts content from HTML
-    """
-
     def process(self, html_content: str) -> list[WordStats]:
-        """
-        1. Clean (Extract words)
-        2. Analyze (Count & Frequency)
-        3. Package (Create WordStats)
-        """
-
-        # 1. Convert to soup object
         soup = BeautifulSoup(html_content, "html.parser")
-
-        # 2. Strip HTML tags
         raw_text = soup.get_text(separator=" ")
-
-        # 3. Tokenize (Clean non-alphanumeric and lowercase)
         words = re.findall(r"\b\w+\b", raw_text.lower())
 
-        # 4. Filter by length and stop words
         filtered_words: list[str] = [
             w
             for w in words
@@ -56,13 +38,11 @@ class WordStatsExtractor:
             and w not in WordStatsExtractor.DEFAULT_IGNORE_WORDS
         ]
 
-        # 5. Calculate Frequencies
         total_count: int = len(filtered_words)
         counts: list[tuple[str, int]] = Counter(filtered_words).most_common(
             self.DEFAULT_TOP_N
         )
 
-        # 6. Map to dataclass (generator expression, then return a reusable list)
         stats_generator = (
             WordStats(
                 word=word,

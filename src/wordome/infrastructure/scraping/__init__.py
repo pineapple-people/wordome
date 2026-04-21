@@ -1,4 +1,4 @@
-from .ikea_reviews_scraper import IkeaReviewsScraper
+from .reviews_scraper_ikea import ReviewsScraperIkea
 from .web_fetcher import WebFetcher
 
-__all__ = ["IkeaReviewsScraper", "WebFetcher"]
+__all__ = ["ReviewsScraperIkea", "WebFetcher"]
