@@ -1,4 +1,5 @@
 import re
+from contextlib import contextmanager
 from time import perf_counter
 
 from bs4 import BeautifulSoup
@@ -14,6 +15,19 @@ from wordome.domain.reviews.models import (
     ReviewScrapeResult,
     ReviewSource,
 )
+
+
+@contextmanager
+def trace_step(label: str):
+    """
+    Helper function to track/debug a specific step of the scraping proces
+    """
+    start = perf_counter()
+    print(f"[ikea] {label}")
+    try:
+        yield
+    finally:
+        print(f"[ikea] {label} took {perf_counter() - start:.2f}s")
 
 
 class ReviewsScraperIkea:
@@ -76,88 +90,72 @@ class ReviewsScraperIkea:
     REVIEW_API_MARKER = "web-api.ikea.com/tugc/public/v5/reviews/"
 
     async def scrape(self, product_url: str) -> ReviewScrapeResult:
-        scrape_start = perf_counter()
         print(f"[ikea] scraping product page: {product_url}")
         html: str | None = None
         collected_reviews: list[Review] = []
         seen_review_keys: set[tuple[str, str, str, str]] = set()
         scraped_tabs: list[str] = []
 
-        async with async_playwright() as playwright:
-            browser = await playwright.chromium.launch(headless=True)
-            context = await browser.new_context(
-                viewport={"width": 1440, "height": 1800},
-                locale="en-US",
-                user_agent=self.DEFAULT_USER_AGENT,
-                ignore_https_errors=True,
-                java_script_enabled=True,
-                extra_http_headers={"Accept-Language": "en-US,en;q=0.9"},
-            )
-            page = await context.new_page()
+        with trace_step("total scrape"):
+            async with async_playwright() as playwright:
+                browser = await playwright.chromium.launch(headless=True)
+                context = await browser.new_context(
+                    viewport={"width": 1440, "height": 1800},
+                    locale="en-US",
+                    user_agent=self.DEFAULT_USER_AGENT,
+                    ignore_https_errors=True,
+                    java_script_enabled=True,
+                    extra_http_headers={"Accept-Language": "en-US,en;q=0.9"},
+                )
+                page = await context.new_page()
 
-            try:
-                step_start = perf_counter()
-                print("[ikea] navigating to PDP")
-                await self._goto(page, product_url)
-                print(
-                    f"[ikea] navigating to PDP took {perf_counter() - step_start:.2f}s"
-                )
+                try:
+                    with trace_step("navigating to PDP"):
+                        await self._goto(page, product_url)
 
-                step_start = perf_counter()
-                print("[ikea] waiting for review entry point")
-                await self._wait_for_reviews_entry_point(page)
-                print(
-                    f"[ikea] waiting for review entry point took {perf_counter() - step_start:.2f}s"
-                )
+                    with trace_step("waiting for review entry point"):
+                        await self._wait_for_reviews_entry_point(page)
 
-                step_start = perf_counter()
-                print("[ikea] opening reviews modal")
-                await self._open_reviews_modal(
-                    page,
-                    product_url,
-                    collected_reviews,
-                    seen_review_keys,
-                )
-                print(
-                    f"[ikea] opening reviews modal took {perf_counter() - step_start:.2f}s"
-                )
+                    with trace_step("opening reviews modal"):
+                        await self._open_reviews_modal(
+                            page,
+                            product_url,
+                            collected_reviews,
+                            seen_review_keys,
+                        )
 
-                step_start = perf_counter()
-                print("[ikea] scraping United States tab")
-                await self._scrape_active_modal_tab(
-                    page,
-                    product_url,
-                    collected_reviews,
-                    seen_review_keys,
-                    "United States",
-                )
-                print(
-                    f"[ikea] scraping United States tab took {perf_counter() - step_start:.2f}s"
-                )
-                scraped_tabs.append("United States")
-                print(
-                    f"[ikea] United States tab complete; reviews captured so far: {len(collected_reviews)}"
-                )
-                if self.INCLUDE_OTHER_COUNTRIES:
-                    # Toggle this on when you want to merge the regional tab too.
-                    for tab_name in self.REVIEW_TABS[1:]:
-                        if await self._switch_review_tab(page, tab_name):
-                            print(f"[ikea] scraping tab: {tab_name}")
-                            await self._scrape_active_modal_tab(
-                                page,
-                                product_url,
-                                collected_reviews,
-                                seen_review_keys,
-                                tab_name,
-                            )
-                            scraped_tabs.append(tab_name)
-                html = await page.content()
-            finally:
-                await context.close()
-                await browser.close()
+                    with trace_step("scraping United States tab"):
+                        await self._scrape_active_modal_tab(
+                            page,
+                            product_url,
+                            collected_reviews,
+                            seen_review_keys,
+                            "United States",
+                        )
+                    scraped_tabs.append("United States")
+                    print(
+                        f"[ikea] United States tab complete; reviews captured so far: {len(collected_reviews)}"
+                    )
+                    if self.INCLUDE_OTHER_COUNTRIES:
+                        # Optional: also scrape the regional "Other countries" tab.
+                        additional_tabs = self.REVIEW_TABS[1:]
+                        for tab_name in additional_tabs:
+                            if await self._switch_review_tab(page, tab_name):
+                                print(f"[ikea] scraping tab: {tab_name}")
+                                await self._scrape_active_modal_tab(
+                                    page,
+                                    product_url,
+                                    collected_reviews,
+                                    seen_review_keys,
+                                    tab_name,
+                                )
+                                scraped_tabs.append(tab_name)
+                    html = await page.content()
+                finally:
+                    await context.close()
+                    await browser.close()
 
         if not html:
-            print(f"[ikea] total scrape time: {perf_counter() - scrape_start:.2f}s")
             return ReviewScrapeResult(
                 product_url=product_url,
                 review_page_url=product_url,
@@ -167,7 +165,7 @@ class ReviewsScraperIkea:
                 ),
             )
 
-        result = ReviewScrapeResult(
+        return ReviewScrapeResult(
             product_url=product_url,
             review_page_url=product_url,
             reviews_count=len(collected_reviews),
@@ -178,11 +176,8 @@ class ReviewsScraperIkea:
                 ),
             ),
         )
-        print(f"[ikea] total scrape time: {perf_counter() - scrape_start:.2f}s")
-        return result
 
     async def _goto(self, page, product_url: str) -> None:
-        step_start = perf_counter()
         try:
             print("[ikea] goto(commit)")
             await page.goto(
@@ -198,10 +193,8 @@ class ReviewsScraperIkea:
                 wait_until="domcontentloaded",
                 timeout=self.DEFAULT_NAVIGATION_TIMEOUT_MS,
             )
-        print(f"[ikea] _goto finished in {perf_counter() - step_start:.2f}s")
 
     async def _wait_for_reviews_entry_point(self, page) -> None:
-        step_start = perf_counter()
         try:
             print("[ikea] waiting for review selectors to appear")
             await page.wait_for_selector(
@@ -210,16 +203,11 @@ class ReviewsScraperIkea:
             )
         except PlaywrightTimeoutError:
             print("[ikea] review entry point not found quickly; continuing")
-        print(
-            f"[ikea] _wait_for_reviews_entry_point finished in {perf_counter() - step_start:.2f}s"
-        )
 
     async def _expand_all_reviews(
         self,
         page,
     ) -> None:
-        step_start = perf_counter()
-        successful_clicks = 0
         for click_index in range(self.DEFAULT_MAX_LOAD_MORE_CLICKS):
             print(f"[ikea] load-more iteration {click_index + 1}")
             await self._nudge_reviews_panel(page)
@@ -240,7 +228,6 @@ class ReviewsScraperIkea:
                 ):
                     print("[ikea] clicking load more")
                     await button.click(timeout=self.DEFAULT_NAVIGATION_TIMEOUT_MS)
-                    successful_clicks += 1
             except Exception as e:
                 print(f"Error occurred: {e}")
                 print("[ikea] load-more click failed or no matching response; stopping")
@@ -254,10 +241,6 @@ class ReviewsScraperIkea:
                 print("[ikea] post-click settle failed; stopping")
                 break
 
-        print(
-            f"[ikea] _expand_all_reviews finished in {perf_counter() - step_start:.2f}s after {successful_clicks} successful clicks"
-        )
-
     async def _scrape_active_modal_tab(
         self,
         page,
@@ -266,21 +249,18 @@ class ReviewsScraperIkea:
         seen_review_keys: set[tuple[str, str, str, str]],
         tab_name: str,
     ) -> None:
-        step_start = perf_counter()
         print(f"[ikea] harvesting tab snapshot: {tab_name}")
-        await self._expand_all_reviews(page)
+        with trace_step(f"load-more pagination for {tab_name}"):
+            await self._expand_all_reviews(page)
         print(f"[ikea] load-more exhausted for tab: {tab_name}")
-        print("[ikea] extracting review cards from final DOM snapshot")
-        await self._harvest_current_reviews(
-            page,
-            product_url,
-            collected_reviews,
-            seen_review_keys,
-            f"{tab_name} final",
-        )
-        print(
-            f"[ikea] _scrape_active_modal_tab({tab_name}) finished in {perf_counter() - step_start:.2f}s"
-        )
+        with trace_step(f"extracting review cards for {tab_name}"):
+            await self._harvest_current_reviews(
+                page,
+                product_url,
+                collected_reviews,
+                seen_review_keys,
+                f"{tab_name} final",
+            )
 
     async def _switch_review_tab(self, page, tab_name: str) -> bool:
         tab = page.get_by_role("tab", name=tab_name)
@@ -407,26 +387,22 @@ class ReviewsScraperIkea:
         seen_review_keys: set[tuple[str, str, str, str]],
         stage: str,
     ) -> int:
-        step_start = perf_counter()
-        print(f"[ikea] capturing DOM for stage: {stage}")
-        html = await page.content()
-        soup = BeautifulSoup(html, "html.parser")
-        reviews = self._extract_reviews(soup, source_url=product_url)
-        print(f"[ikea] parsed {len(reviews)} review candidates from DOM")
+        with trace_step(f"capturing DOM for {stage}"):
+            html = await page.content()
+            soup = BeautifulSoup(html, "html.parser")
+            reviews = self._extract_reviews(soup, source_url=product_url)
+            print(f"[ikea] parsed {len(reviews)} review candidates from DOM")
 
-        new_reviews = 0
-        for review in reviews:
-            key = self._review_key(review)
-            if key in seen_review_keys:
-                continue
-            seen_review_keys.add(key)
-            collected_reviews.append(review)
-            new_reviews += 1
-        print(f"[ikea] {stage}: added {new_reviews} new reviews")
-        print(
-            f"[ikea] _harvest_current_reviews({stage}) finished in {perf_counter() - step_start:.2f}s"
-        )
-        return new_reviews
+            new_reviews = 0
+            for review in reviews:
+                key = self._review_key(review)
+                if key in seen_review_keys:
+                    continue
+                seen_review_keys.add(key)
+                collected_reviews.append(review)
+                new_reviews += 1
+            print(f"[ikea] {stage}: added {new_reviews} new reviews")
+            return new_reviews
 
     def _extract_summary(self, soup: BeautifulSoup) -> str | None:
         summary_node = soup.select_one(self.REVIEW_SUMMARY_SELECTOR)
