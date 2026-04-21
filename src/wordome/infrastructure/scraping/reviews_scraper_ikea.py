@@ -35,9 +35,8 @@ class ReviewsScraperIkea:
     POC scraper for IKEA PDP review collection.
 
     The page exposes review cards in the DOM and a dedicated "Load more" button
-    in the review modal / section. We treat each click as a pagination step:
-    capture the current visible batch, wait for the batch to change, and then
-    capture the next page of reviews.
+    in the review modal / section. We click through pagination until the button
+    is exhausted, then capture the final DOM snapshot once.
     """
 
     # Browser and interaction defaults.
@@ -90,7 +89,7 @@ class ReviewsScraperIkea:
         "[class*='review']",
     )
     REVIEW_TABS = ("United States", "Other countries")
-    REVIEW_API_MARKER = "web-api.ikea.com/tugc/public/v5/reviews/"
+    # REVIEW_API_MARKER = "web-api.ikea.com/tugc/public/v5/reviews/"
     REVIEW_MODAL_PAGINATION_SELECTOR = "div.ugc-rr-pip-fe-reviews__load-more"
 
     def _log(self, message: str) -> None:
@@ -100,7 +99,6 @@ class ReviewsScraperIkea:
         self._log(f"scraping product page: {product_url}")
         html: str | None = None
         collected_reviews: list[Review] = []
-        seen_review_keys: set[tuple[str, str, str, str]] = set()
         scraped_tabs: list[str] = []
 
         with trace_step(self, "total scrape"):
@@ -128,7 +126,6 @@ class ReviewsScraperIkea:
                             page,
                             product_url,
                             collected_reviews,
-                            seen_review_keys,
                         )
 
                     with trace_step(self, "scraping reviews tab: United States"):
@@ -136,7 +133,6 @@ class ReviewsScraperIkea:
                             page,
                             product_url,
                             collected_reviews,
-                            seen_review_keys,
                             "United States",
                         )
                     scraped_tabs.append("United States")
@@ -153,7 +149,6 @@ class ReviewsScraperIkea:
                                     page,
                                     product_url,
                                     collected_reviews,
-                                    seen_review_keys,
                                     tab_name,
                                 )
                                 scraped_tabs.append(tab_name)
@@ -231,14 +226,10 @@ class ReviewsScraperIkea:
                 self._log(f"↳ error occurred: {e}")
 
             try:
-                async with page.expect_response(
-                    lambda response: self.REVIEW_API_MARKER in response.url.lower(),
-                    timeout=self.DEFAULT_NAVIGATION_TIMEOUT_MS,
-                ):
-                    self._log("↳ clicking load more")
-                    await button.click(timeout=self.DEFAULT_NAVIGATION_TIMEOUT_MS)
+                self._log("↳ clicking load more")
+                await button.click(timeout=self.DEFAULT_NAVIGATION_TIMEOUT_MS)
             except Exception as e:
-                self._log("↳ load-more click failed or no matching response; stopping")
+                self._log("↳ load-more click failed; stopping")
                 self._log(f"↳ error occurred: {e}")
                 break
 
@@ -255,7 +246,6 @@ class ReviewsScraperIkea:
         page,
         product_url: str,
         collected_reviews: list[Review],
-        seen_review_keys: set[tuple[str, str, str, str]],
         tab_name: str,
     ) -> None:
         self._log(f"↳ capturing current tab state: {tab_name}")
@@ -267,8 +257,7 @@ class ReviewsScraperIkea:
                 page,
                 product_url,
                 collected_reviews,
-                seen_review_keys,
-                f"{tab_name} final snapshot",
+                f"{tab_name} capture HTML snapshot",
             )
 
     async def _switch_review_tab(self, page, tab_name: str) -> bool:
@@ -291,7 +280,6 @@ class ReviewsScraperIkea:
         page,
         product_url: str,
         collected_reviews: list[Review],
-        seen_review_keys: set[tuple[str, str, str, str]],
     ) -> None:
         """
         Open the IKEA reviews modal / expanded review view if a trigger is present.
@@ -380,16 +368,11 @@ class ReviewsScraperIkea:
                 break
             await page.wait_for_timeout(300)
 
-    async def _review_card_count(self, page) -> int:
-        selectors = ", ".join(self.REVIEW_CARD_SELECTORS)
-        return await page.locator(selectors).count()
-
     async def _capture_html_snapshot(
         self,
         page,
         product_url: str,
         collected_reviews: list[Review],
-        seen_review_keys: set[tuple[str, str, str, str]],
         stage: str,
     ) -> int:
         with trace_step(self, f"capturing HTML snapshot for {stage}"):
@@ -398,16 +381,9 @@ class ReviewsScraperIkea:
             reviews = self._extract_reviews(soup, source_url=product_url)
             self._log(f"💡 parsed {len(reviews)} review candidates from DOM")
 
-            new_reviews = 0
-            for review in reviews:
-                key = self._review_key(review)
-                if key in seen_review_keys:
-                    continue
-                seen_review_keys.add(key)
-                collected_reviews.append(review)
-                new_reviews += 1
-            self._log(f"💡 {stage}: added {new_reviews} new reviews")
-            return new_reviews
+            collected_reviews.extend(reviews)
+            self._log(f"💡 {stage}: added {len(reviews)} reviews")
+            return len(reviews)
 
     def _extract_summary(self, soup: BeautifulSoup) -> str | None:
         summary_node = soup.select_one(self.REVIEW_SUMMARY_SELECTOR)
@@ -510,14 +486,6 @@ class ReviewsScraperIkea:
             deduped.append(review)
 
         return deduped
-
-    def _review_key(self, review: Review) -> tuple[str, str, str, str]:
-        return (
-            self._normalize(review.title),
-            self._normalize(review.author),
-            self._normalize(review.body),
-            str(review.rating or ""),
-        )
 
     def _dedupe_strings(self, values: list[str]) -> list[str]:
         deduped: list[str] = []
