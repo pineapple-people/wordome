@@ -100,7 +100,6 @@ class ReviewsScraperIkea:
         self._log(f"scraping product page: {product_url}")
         html: str | None = None
         collected_reviews: list[Review] = []
-        seen_review_keys: set[tuple[str, str, str, str]] = set()
         scraped_tabs: list[str] = []
 
         with trace_step(self, "total scrape"):
@@ -128,7 +127,6 @@ class ReviewsScraperIkea:
                             page,
                             product_url,
                             collected_reviews,
-                            seen_review_keys,
                         )
 
                     with trace_step(self, "scraping reviews tab: United States"):
@@ -136,7 +134,6 @@ class ReviewsScraperIkea:
                             page,
                             product_url,
                             collected_reviews,
-                            seen_review_keys,
                             "United States",
                         )
                     scraped_tabs.append("United States")
@@ -153,7 +150,6 @@ class ReviewsScraperIkea:
                                     page,
                                     product_url,
                                     collected_reviews,
-                                    seen_review_keys,
                                     tab_name,
                                 )
                                 scraped_tabs.append(tab_name)
@@ -255,7 +251,6 @@ class ReviewsScraperIkea:
         page,
         product_url: str,
         collected_reviews: list[Review],
-        seen_review_keys: set[tuple[str, str, str, str]],
         tab_name: str,
     ) -> None:
         self._log(f"↳ capturing current tab state: {tab_name}")
@@ -267,8 +262,7 @@ class ReviewsScraperIkea:
                 page,
                 product_url,
                 collected_reviews,
-                seen_review_keys,
-                f"{tab_name} final snapshot",
+                f"{tab_name} capture HTML snapshot",
             )
 
     async def _switch_review_tab(self, page, tab_name: str) -> bool:
@@ -291,7 +285,6 @@ class ReviewsScraperIkea:
         page,
         product_url: str,
         collected_reviews: list[Review],
-        seen_review_keys: set[tuple[str, str, str, str]],
     ) -> None:
         """
         Open the IKEA reviews modal / expanded review view if a trigger is present.
@@ -389,7 +382,6 @@ class ReviewsScraperIkea:
         page,
         product_url: str,
         collected_reviews: list[Review],
-        seen_review_keys: set[tuple[str, str, str, str]],
         stage: str,
     ) -> int:
         with trace_step(self, f"capturing HTML snapshot for {stage}"):
@@ -398,16 +390,9 @@ class ReviewsScraperIkea:
             reviews = self._extract_reviews(soup, source_url=product_url)
             self._log(f"💡 parsed {len(reviews)} review candidates from DOM")
 
-            new_reviews = 0
-            for review in reviews:
-                key = self._review_key(review)
-                if key in seen_review_keys:
-                    continue
-                seen_review_keys.add(key)
-                collected_reviews.append(review)
-                new_reviews += 1
-            self._log(f"💡 {stage}: added {new_reviews} new reviews")
-            return new_reviews
+            collected_reviews.extend(reviews)
+            self._log(f"💡 {stage}: added {len(reviews)} reviews")
+            return len(reviews)
 
     def _extract_summary(self, soup: BeautifulSoup) -> str | None:
         summary_node = soup.select_one(self.REVIEW_SUMMARY_SELECTOR)
@@ -510,14 +495,6 @@ class ReviewsScraperIkea:
             deduped.append(review)
 
         return deduped
-
-    def _review_key(self, review: Review) -> tuple[str, str, str, str]:
-        return (
-            self._normalize(review.title),
-            self._normalize(review.author),
-            self._normalize(review.body),
-            str(review.rating or ""),
-        )
 
     def _dedupe_strings(self, values: list[str]) -> list[str]:
         deduped: list[str] = []
