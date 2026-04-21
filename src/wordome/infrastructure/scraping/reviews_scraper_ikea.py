@@ -263,7 +263,7 @@ class ReviewsScraperIkea:
             await self._expand_all_reviews(page)
         self._log(f"↳ load-more pagination exhausted for {tab_name}")
         with trace_step(self, f"extracting review cards for {tab_name}"):
-            await self._harvest_current_reviews(
+            await self._capture_html_snapshot(
                 page,
                 product_url,
                 collected_reviews,
@@ -384,7 +384,7 @@ class ReviewsScraperIkea:
         selectors = ", ".join(self.REVIEW_CARD_SELECTORS)
         return await page.locator(selectors).count()
 
-    async def _harvest_current_reviews(
+    async def _capture_html_snapshot(
         self,
         page,
         product_url: str,
@@ -392,7 +392,7 @@ class ReviewsScraperIkea:
         seen_review_keys: set[tuple[str, str, str, str]],
         stage: str,
     ) -> int:
-        with trace_step(self, f"capturing DOM for {stage}"):
+        with trace_step(self, f"capturing HTML snapshot for {stage}"):
             html = await page.content()
             soup = BeautifulSoup(html, "html.parser")
             reviews = self._extract_reviews(soup, source_url=product_url)
