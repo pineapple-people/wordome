@@ -1,13 +1,15 @@
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from wordome.domain import ReviewSectionDetector
-from wordome.infrastructure import WebFetcher
+from wordome.domain import ReviewsScraper
+from wordome.domain.demo import ReviewSectionDetector
+from wordome.infrastructure import ReviewsScraperIkea, WebFetcher
 from wordome.infrastructure.database.snowflake_repository import SnowflakeRepository
 
 router = APIRouter(prefix="/sandbox", tags=["sandbox"])
 web_fetcher = WebFetcher()
 review_detector = ReviewSectionDetector()
+ikea_scraper: ReviewsScraper = ReviewsScraperIkea()
 
 
 def _get_repository() -> SnowflakeRepository:
@@ -25,7 +27,7 @@ async def sandbox_root():
     return {
         "name": "Sandbox",
         "description": "Debug and testing endpoints",
-        "endpoints": ["/headers", "/fetch_html", "/db/ping"],
+        "endpoints": ["/headers", "/fetch_html", "/reviews/ikea", "/db/ping"],
     }
 
 
@@ -79,3 +81,12 @@ async def db_ping(
         }
     except Exception as e:
         return {"success": False, "error": str(e)}
+
+
+@router.post("/reviews/ikea")
+async def scrape_reviews_ikea(request: FetchRequest):
+    """
+    IKEA PDP review scrape using SSR review cards.
+    """
+    result = await ikea_scraper.scrape(request.url)
+    return result

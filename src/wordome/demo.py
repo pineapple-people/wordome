@@ -2,7 +2,7 @@ import asyncio
 from importlib import resources
 
 import wordome.resources as urls_source
-from wordome.domain import WordStats, WordStatsExtractor
+from wordome.domain.demo import WordStats, WordStatsExtractor
 from wordome.infrastructure import WebFetcher
 
 
