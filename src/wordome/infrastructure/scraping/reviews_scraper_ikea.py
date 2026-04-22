@@ -38,7 +38,7 @@ class ReviewsScraperIkea:
         "Chrome/123.0.0.0 Safari/537.36"
     )
     DEFAULT_MODAL_SETTLE_MS = 250
-    REVIEW_MODAL_PAGINATION_TIMEOUT_MS = 5_000
+    REVIEW_MODAL_PAGINATION_TIMEOUT_MS = 20_000
     DEFAULT_MAX_LOAD_MORE_CLICKS = 20
     REVIEW_MODAL_TAB_SCOPE = ".ugc-rr-pip-fe-modal-wrapper--open"
     REVIEW_REGION_TAB_ALLOWLIST = ("United States", "Other countries")
@@ -155,11 +155,11 @@ class ReviewsScraperIkea:
                                     tab_name,
                                 )
                             scraped_tabs.append(tab_name)
-                            self._trace.message(
-                                f"reviews tab complete: {tab_name}; reviews captured so far: {len(collected_reviews)}",
-                                level="info",
-                            )
                         html = await page.content()
+                        self._trace.message(
+                            f"review scrape complete: {len(collected_reviews)} reviews captured",
+                            level="info",
+                        )
                     finally:
                         await context.close()
                         await browser.close()
@@ -224,39 +224,46 @@ class ReviewsScraperIkea:
         page,
     ) -> None:
         for click_index in range(self.DEFAULT_MAX_LOAD_MORE_CLICKS):
-            self._trace.message(f"load-more iteration {click_index + 1}", level="info")
-            await self._nudge_reviews_panel(page)
-            button = await self._find_load_more_button(page)
-            if button is None:
-                self._trace.message(
-                    "no load more button found; stopping pagination",
-                    level="warn",
-                )
-                break
+            with self._trace.step(f"load-more iteration {click_index + 1}"):
+                await self._nudge_reviews_panel(page)
+                button, selector = await self._find_load_more_button(page)
+                if button is None:
+                    self._trace.message(
+                        "no load more button found; stopping pagination",
+                        level="warn",
+                    )
+                    break
 
-            try:
-                await button.scroll_into_view_if_needed(timeout=5_000)
-            except Exception as e:
-                self._trace.message(f"scroll into view failed: {e}", level="error")
+                try:
+                    await button.scroll_into_view_if_needed(timeout=5_000)
+                except Exception as e:
+                    self._trace.message(
+                        f"scroll into view failed: {e}", level="error"
+                    )
 
-            try:
-                self._trace.message("click load more", level="info")
-                await button.click(timeout=self.DEFAULT_NAVIGATION_TIMEOUT_MS)
-            except Exception as e:
-                self._trace.message("load-more click failed; stopping", level="warn")
-                self._trace.message(f"click failed: {e}", level="error")
-                break
+                try:
+                    self._trace.callout("selector", selector)
+                    self._trace.message("clicking load more button", level="info")
+                    await button.click(timeout=self.DEFAULT_NAVIGATION_TIMEOUT_MS)
+                except Exception as e:
+                    self._trace.message(
+                        "load-more click failed; stopping", level="warn"
+                    )
+                    self._trace.message(f"click failed: {e}", level="error")
+                    break
 
-            try:
-                self._trace.message(
-                    "wait for modal to settle after pagination",
-                    level="info",
-                )
-                await page.wait_for_timeout(self.DEFAULT_MODAL_SETTLE_MS)
-            except Exception as e:
-                self._trace.message("post-click settle failed; stopping", level="warn")
-                self._trace.message(f"settle wait failed: {e}", level="error")
-                break
+                try:
+                    self._trace.message(
+                        "wait for modal to settle after pagination",
+                        level="info",
+                    )
+                    await page.wait_for_timeout(self.DEFAULT_MODAL_SETTLE_MS)
+                except Exception as e:
+                    self._trace.message(
+                        "post-click settle failed; stopping", level="warn"
+                    )
+                    self._trace.message(f"settle wait failed: {e}", level="error")
+                    break
 
     async def _scrape_active_modal_tab(
         self,
@@ -276,7 +283,7 @@ class ReviewsScraperIkea:
                 page,
                 product_url,
                 collected_reviews,
-                f"{tab_name} capture HTML snapshot",
+                tab_name,
             )
 
     async def _discover_review_tabs(self, page) -> list[str]:
@@ -440,9 +447,9 @@ class ReviewsScraperIkea:
                         f"load-more control probe failed: {e}", level="error"
                     )
                     continue
-                return button
+                return button, selector
 
-        return None
+        return None, None
 
     async def _nudge_reviews_panel(self, page) -> None:
         """
@@ -485,7 +492,7 @@ class ReviewsScraperIkea:
             )
 
             collected_reviews.extend(reviews)
-            self._trace.message(f"{stage}: added {len(reviews)} reviews", level="info")
+            self._trace.message(f"{stage} snapshot: +{len(reviews)} reviews", level="info")
             return len(reviews)
 
     def _extract_summary(self, soup: BeautifulSoup) -> str | None:
