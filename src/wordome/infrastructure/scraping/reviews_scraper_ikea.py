@@ -35,9 +35,9 @@ class ReviewsScraperIkea:
     DEFAULT_MODAL_SETTLE_MS = 250
     REVIEW_MODAL_PAGINATION_TIMEOUT_MS = 5_000
     DEFAULT_MAX_LOAD_MORE_CLICKS = 20
-
-    # Feature toggles.
-    INCLUDE_OTHER_COUNTRIES = False
+    REVIEW_MODAL_TAB_SCOPE = ".ugc-rr-pip-fe-modal-wrapper--open"
+    REVIEW_REGION_TAB_ALLOWLIST = ("United States", "Other countries")
+    REVIEW_TAB_CONTROLS = ("local", "other")
 
     # Review card extraction selectors.
     REVIEW_CARD_SELECTORS = (
@@ -74,12 +74,12 @@ class ReviewsScraperIkea:
         ".pipf-seo-reviews__summary",
         "[class*='review']",
     )
-    REVIEW_TABS = ("United States", "Other countries")
     # REVIEW_API_MARKER = "web-api.ikea.com/tugc/public/v5/reviews/"
     REVIEW_MODAL_PAGINATION_SELECTOR = "div.ugc-rr-pip-fe-reviews__load-more"
 
-    def __init__(self) -> None:
+    def __init__(self, consider_other_tabs: bool = False) -> None:
         self._default_trace = RichTraceLogger(self.__class__.__name__)
+        self.consider_other_tabs = consider_other_tabs
 
     @property
     def _trace(self) -> RichTraceLogger:
@@ -120,34 +120,40 @@ class ReviewsScraperIkea:
                                 collected_reviews,
                             )
 
-                        with self._trace.step("scraping reviews tab: United States"):
-                            await self._scrape_active_modal_tab(
-                                page,
-                                product_url,
-                                collected_reviews,
-                                "United States",
+                        if self.consider_other_tabs:
+                            review_tabs = await self._discover_review_tabs(page)
+                            if not review_tabs:
+                                review_tabs = ["United States"]
+
+                            self._trace.message(
+                                "review tabs: " + ", ".join(review_tabs),
+                                level="info",
                             )
-                        scraped_tabs.append("United States")
-                        self._trace.message(
-                            f"reviews tab complete: United States; reviews captured so far: {len(collected_reviews)}",
-                            level="info",
-                        )
-                        if self.INCLUDE_OTHER_COUNTRIES:
-                            # Optional: also scrape the regional "Other countries" tab.
-                            additional_tabs = self.REVIEW_TABS[1:]
-                            for tab_name in additional_tabs:
-                                if await self._switch_review_tab(page, tab_name):
-                                    self._trace.message(
-                                        f"scraping tab: {tab_name}",
-                                        level="info",
-                                    )
-                                    await self._scrape_active_modal_tab(
-                                        page,
-                                        product_url,
-                                        collected_reviews,
-                                        tab_name,
-                                    )
-                                    scraped_tabs.append(tab_name)
+                        else:
+                            self._trace.message(
+                                "tab discovery skipped; using United States only",
+                                level="info",
+                            )
+                            review_tabs = ["United States"]
+
+                        for index, tab_name in enumerate(review_tabs):
+                            if index > 0 and not await self._switch_review_tab(
+                                page, tab_name
+                            ):
+                                continue
+
+                            with self._trace.step(f"scraping reviews tab: {tab_name}"):
+                                await self._scrape_active_modal_tab(
+                                    page,
+                                    product_url,
+                                    collected_reviews,
+                                    tab_name,
+                                )
+                            scraped_tabs.append(tab_name)
+                            self._trace.message(
+                                f"reviews tab complete: {tab_name}; reviews captured so far: {len(collected_reviews)}",
+                                level="info",
+                            )
                         html = await page.content()
                     finally:
                         await context.close()
@@ -267,6 +273,80 @@ class ReviewsScraperIkea:
                 collected_reviews,
                 f"{tab_name} capture HTML snapshot",
             )
+
+    async def _discover_review_tabs(self, page) -> list[str]:
+        selected_tabs: list[str] = []
+        unselected_tabs: list[str] = []
+        modal = page.locator(self.REVIEW_MODAL_TAB_SCOPE)
+        if await modal.count() == 0:
+            return []
+
+        locator = modal.first.get_by_role("tab")
+        count = await locator.count()
+
+        for index in range(count):
+            tab = locator.nth(index)
+            try:
+                if not await tab.is_visible():
+                    continue
+            except Exception as e:
+                self._trace.message(f"tab visibility failed: {e}", level="warn")
+                continue
+
+            text = None
+            try:
+                text = await tab.text_content()
+            except Exception:
+                text = None
+
+            if not text:
+                try:
+                    text = await tab.get_attribute("aria-label")
+                except Exception:
+                    text = None
+
+            normalized = (text or "").strip()
+            if not normalized:
+                continue
+
+            controls = None
+            try:
+                controls = await tab.get_attribute("aria-controls")
+            except Exception:
+                controls = None
+
+            if not self._is_review_tab(normalized, controls):
+                self._trace.message(f"tab skip: {normalized}", level="warn")
+                continue
+
+            self._trace.message(f"tab ok: {normalized}", level="info")
+            is_active = False
+            try:
+                is_active = (await tab.get_attribute("aria-selected")) == "true"
+            except Exception:
+                is_active = False
+
+            if is_active:
+                selected_tabs.append(normalized)
+            else:
+                unselected_tabs.append(normalized)
+
+        return self._dedupe_strings([*selected_tabs, *unselected_tabs])
+
+    def _is_review_tab(
+        self,
+        tab_name: str,
+        aria_controls: str | None,
+    ) -> bool:
+        normalized = tab_name.strip()
+        if not normalized:
+            return False
+
+        if normalized not in self.REVIEW_REGION_TAB_ALLOWLIST:
+            return False
+
+        controls = (aria_controls or "").strip()
+        return controls in self.REVIEW_TAB_CONTROLS
 
     async def _switch_review_tab(self, page, tab_name: str) -> bool:
         tab = page.get_by_role("tab", name=tab_name)

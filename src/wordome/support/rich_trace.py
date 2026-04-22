@@ -36,7 +36,6 @@ class RichTraceLogger:
             "info": "cyan",
             "warn": "yellow",
             "error": "bold red",
-            "accent": "bold magenta",
         }
         return styles.get(level, level)
 
