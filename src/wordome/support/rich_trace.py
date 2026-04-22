@@ -2,8 +2,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from time import perf_counter
 
-from rich.console import Group
-from rich.console import Console
+from rich.console import Console, Group
 from rich.live import Live
 from rich.panel import Panel
 from rich.spinner import Spinner

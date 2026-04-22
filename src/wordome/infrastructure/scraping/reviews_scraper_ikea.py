@@ -13,11 +13,7 @@ from wordome.domain.reviews.models import (
     ReviewScrapeResult,
     ReviewSource,
 )
-from wordome.support import (
-    RichLiveTraceLogger,
-    current_trace,
-    use_trace,
-)
+from wordome.support import RichLiveTraceLogger, current_trace, use_trace
 
 
 class ReviewsScraperIkea:
@@ -274,9 +270,7 @@ class ReviewsScraperIkea:
         self._trace.message(f"tab state: {tab_name}", level="info")
         with self._trace.step(f"load more: {tab_name}"):
             await self._expand_all_reviews(page)
-        self._trace.message(
-            f"done loading: {tab_name}", level="info"
-        )
+        self._trace.message(f"done loading: {tab_name}", level="info")
         with self._trace.step(f"extract: {tab_name}"):
             await self._capture_html_snapshot(
                 page,
