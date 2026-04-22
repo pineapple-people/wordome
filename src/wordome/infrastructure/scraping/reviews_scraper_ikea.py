@@ -37,8 +37,9 @@ class ReviewsScraperIkea:
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/123.0.0.0 Safari/537.36"
     )
+    REVIEW_MODAL_OPEN_SETTLE_MS = 500
     DEFAULT_MODAL_SETTLE_MS = 250
-    REVIEW_MODAL_PAGINATION_TIMEOUT_MS = 20_000
+    REVIEW_UI_READY_TIMEOUT_MS = 2_000
     DEFAULT_MAX_LOAD_MORE_CLICKS = 20
     REVIEW_MODAL_TAB_SCOPE = ".ugc-rr-pip-fe-modal-wrapper--open"
     REVIEW_REGION_TAB_ALLOWLIST = ("United States", "Other countries")
@@ -57,6 +58,7 @@ class ReviewsScraperIkea:
     REVIEW_RATING_SELECTOR = ".ugc-rr-pip-fe-rating__stars, .pipf-seo-reviews__review-ratingValue, [class*='review-ratingValue']"
 
     # Pagination / modal selectors.
+    REVIEW_MODAL_PAGINATION_SELECTOR = "div.ugc-rr-pip-fe-reviews__load-more"
     LOAD_MORE_SELECTORS = (
         "button:has-text('Load more')",
         "button:has-text('Load More')",
@@ -66,21 +68,20 @@ class ReviewsScraperIkea:
         "button.ugc-rr-pip-fe-reviews__load-more__button",
     )
     REVIEW_MODAL_OPENERS = (
-        "div.js-ugc-container.pipf-ratings-and-qna > button.pipf-rating",
-        "div.js-ugc-container.pipf-ratings-and-qna .pipf-rating",
         "div.js-ugc-container.pipf-ratings-and-qna button.pipf-rating",
-        ".pipf-rating",
-        "button:has-text('Show all reviews')",
-        "button:has-text('Show reviews')",
-        "button:has-text('Reviews')",
+        "div.js-ugc-container.pipf-ratings-and-qna > button.pipf-rating",
+        "button:has-text('Show all reviews')button:has-text('Reviews')",
     )
     REVIEW_ENTRY_SELECTORS = (
         *REVIEW_MODAL_OPENERS,
         ".pipf-seo-reviews__summary",
         "[class*='review']",
     )
+    REVIEW_MODAL_READY_SELECTORS = (
+        REVIEW_MODAL_TAB_SCOPE,
+        REVIEW_MODAL_PAGINATION_SELECTOR,
+    )
     # REVIEW_API_MARKER = "web-api.ikea.com/tugc/public/v5/reviews/"
-    REVIEW_MODAL_PAGINATION_SELECTOR = "div.ugc-rr-pip-fe-reviews__load-more"
 
     def __init__(self, consider_other_tabs: bool = False) -> None:
         self._default_trace = RichLiveTraceLogger(self.__class__.__name__)
@@ -229,7 +230,7 @@ class ReviewsScraperIkea:
                 button, selector = await self._find_load_more_button(page)
                 if button is None:
                     self._trace.message(
-                        "no load more button found; stopping pagination",
+                        "🛑 no load more button found; stopping pagination",
                         level="warn",
                     )
                     break
@@ -237,9 +238,7 @@ class ReviewsScraperIkea:
                 try:
                     await button.scroll_into_view_if_needed(timeout=5_000)
                 except Exception as e:
-                    self._trace.message(
-                        f"scroll into view failed: {e}", level="error"
-                    )
+                    self._trace.message(f"scroll into view failed: {e}", level="error")
 
                 try:
                     self._trace.callout("selector", selector)
@@ -384,6 +383,9 @@ class ReviewsScraperIkea:
         """
         Open the IKEA reviews modal / expanded review view if a trigger is present.
         """
+        with self._trace.step("pre-probe settle"):
+            await page.wait_for_timeout(self.REVIEW_MODAL_OPEN_SETTLE_MS)
+
         for selector in self.REVIEW_MODAL_OPENERS:
             with self._trace.step("selector probe"):
                 self._trace.callout("selector", selector)
@@ -403,12 +405,12 @@ class ReviewsScraperIkea:
                             await opener.click(
                                 timeout=self.DEFAULT_NAVIGATION_TIMEOUT_MS
                             )
-                            await self._wait_for_reviews_modal_ready(page)
+                            await self._wait_for_review_ui_ready(page)
                             self._trace.message("matched visible opener", level="info")
                             return
                         except PlaywrightTimeoutError:
                             self._trace.message(
-                                "timed out waiting for modal readiness",
+                                f"timed out waiting for review ui readiness after {self.REVIEW_UI_READY_TIMEOUT_MS}ms",
                                 level="warn",
                             )
                             continue
@@ -421,11 +423,19 @@ class ReviewsScraperIkea:
                     self._trace.message(f"selector probe failed: {e}", level="error")
                     continue
 
-    async def _wait_for_reviews_modal_ready(self, page) -> None:
-        await page.wait_for_selector(
-            self.REVIEW_MODAL_PAGINATION_SELECTOR,
-            state="visible",
-            timeout=self.REVIEW_MODAL_PAGINATION_TIMEOUT_MS,
+    async def _wait_for_review_ui_ready(self, page) -> None:
+        for selector in self.REVIEW_MODAL_READY_SELECTORS:
+            try:
+                await page.locator(selector).first.wait_for(
+                    state="visible",
+                    timeout=self.REVIEW_UI_READY_TIMEOUT_MS,
+                )
+                return
+            except PlaywrightTimeoutError:
+                continue
+
+        raise PlaywrightTimeoutError(
+            f"timed out waiting for review ui readiness after {self.REVIEW_UI_READY_TIMEOUT_MS}ms"
         )
 
     async def _find_load_more_button(self, page):
@@ -492,7 +502,9 @@ class ReviewsScraperIkea:
             )
 
             collected_reviews.extend(reviews)
-            self._trace.message(f"{stage} snapshot: +{len(reviews)} reviews", level="info")
+            self._trace.message(
+                f"{stage} snapshot: +{len(reviews)} reviews", level="info"
+            )
             return len(reviews)
 
     def _extract_summary(self, soup: BeautifulSoup) -> str | None:
