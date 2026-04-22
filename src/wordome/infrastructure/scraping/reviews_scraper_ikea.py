@@ -15,7 +15,6 @@ from wordome.domain.reviews.models import (
 )
 from wordome.support import (
     RichLiveTraceLogger,
-    RichTraceLogger,
     current_trace,
     use_trace,
 )
@@ -89,7 +88,7 @@ class ReviewsScraperIkea:
         self.consider_other_tabs = consider_other_tabs
 
     @property
-    def _trace(self) -> RichTraceLogger:
+    def _trace(self) -> RichLiveTraceLogger:
         return current_trace() or self._default_trace
 
     def render_result(self, result: ReviewScrapeResult) -> None:
