@@ -16,8 +16,8 @@ class Review:
     title: str | None = None
     body: str = ""
     rating: float | None = None
+    rating_scale_max: int | None = 5
     date: str | None = None
-    verified_purchase: bool | None = None
     source: ReviewSource | None = None
     source_url: str | None = None
 

@@ -89,4 +89,5 @@ async def scrape_reviews_ikea(request: FetchRequest):
     IKEA PDP review scrape using SSR review cards.
     """
     result = await ikea_scraper.scrape(request.url)
+    ikea_scraper.render_result(result)
     return result

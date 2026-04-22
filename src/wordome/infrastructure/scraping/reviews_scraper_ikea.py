@@ -37,7 +37,7 @@ class ReviewsScraperIkea:
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/123.0.0.0 Safari/537.36"
     )
-    REVIEW_MODAL_OPEN_SETTLE_MS = 500
+    REVIEW_MODAL_OPEN_SETTLE_MS = 1_000
     DEFAULT_MODAL_SETTLE_MS = 250
     REVIEW_UI_READY_TIMEOUT_MS = 2_000
     DEFAULT_MAX_LOAD_MORE_CLICKS = 20
@@ -55,7 +55,7 @@ class ReviewsScraperIkea:
     REVIEW_TITLE_SELECTOR = ".ugc-rr-pip-fe-review__title, .pipf-seo-reviews__review-title, [class*='review-title']"
     REVIEW_AUTHOR_SELECTOR = ".ugc-rr-pip-fe-reviewer-name, .pipf-seo-reviews__review-name, [class*='review-name']"
     REVIEW_BODY_SELECTOR = ".ugc-rr-pip-fe-review__text, .pipf-seo-reviews__review-text, [class*='review-text']"
-    REVIEW_RATING_SELECTOR = ".ugc-rr-pip-fe-rating__stars, .pipf-seo-reviews__review-ratingValue, [class*='review-ratingValue']"
+    REVIEW_RATING_SELECTOR = ".ugc-rr-pip-fe-rating__sr-only, .ugc-rr-pip-fe-rating__stars, .pipf-seo-reviews__review-ratingValue, [class*='review-ratingValue']"
 
     # Pagination / modal selectors.
     REVIEW_MODAL_PAGINATION_SELECTOR = "div.ugc-rr-pip-fe-reviews__load-more"
@@ -70,7 +70,8 @@ class ReviewsScraperIkea:
     REVIEW_MODAL_OPENERS = (
         "div.js-ugc-container.pipf-ratings-and-qna button.pipf-rating",
         "div.js-ugc-container.pipf-ratings-and-qna > button.pipf-rating",
-        "button:has-text('Show all reviews')button:has-text('Reviews')",
+        "button:has-text('Reviews')",
+        "button:has-text('Show all reviews')",
     )
     REVIEW_ENTRY_SELECTORS = (
         *REVIEW_MODAL_OPENERS,
@@ -90,6 +91,9 @@ class ReviewsScraperIkea:
     @property
     def _trace(self) -> RichTraceLogger:
         return current_trace() or self._default_trace
+
+    def render_result(self, result: ReviewScrapeResult) -> None:
+        self._default_trace.render_result(result)
 
     async def scrape(self, product_url: str) -> ReviewScrapeResult:
         trace = RichLiveTraceLogger(self.__class__.__name__)
@@ -119,7 +123,7 @@ class ReviewsScraperIkea:
                         with self._trace.step("discovering review entry point"):
                             await self._wait_for_reviews_entry_point(page)
 
-                        with self._trace.step("reviews modal open flow"):
+                        with self._trace.step("open reviews modal"):
                             await self._open_reviews_modal(
                                 page,
                                 product_url,
@@ -132,12 +136,12 @@ class ReviewsScraperIkea:
                                 review_tabs = ["United States"]
 
                             self._trace.message(
-                                "review tabs: " + ", ".join(review_tabs),
+                                "tabs found: " + ", ".join(review_tabs),
                                 level="info",
                             )
                         else:
                             self._trace.message(
-                                "tab discovery skipped; using United States only",
+                                "tabs off; United States only",
                                 level="info",
                             )
                             review_tabs = ["United States"]
@@ -148,7 +152,7 @@ class ReviewsScraperIkea:
                             ):
                                 continue
 
-                            with self._trace.step(f"scraping reviews tab: {tab_name}"):
+                            with self._trace.step(f"tab: {tab_name}"):
                                 await self._scrape_active_modal_tab(
                                     page,
                                     product_url,
@@ -158,7 +162,7 @@ class ReviewsScraperIkea:
                             scraped_tabs.append(tab_name)
                         html = await page.content()
                         self._trace.message(
-                            f"review scrape complete: {len(collected_reviews)} reviews captured",
+                            f"scrape complete: {len(collected_reviews)} reviews",
                             level="info",
                         )
                     finally:
@@ -229,10 +233,7 @@ class ReviewsScraperIkea:
                 await self._nudge_reviews_panel(page)
                 button, selector = await self._find_load_more_button(page)
                 if button is None:
-                    self._trace.message(
-                        "🛑 no load more button found; stopping pagination",
-                        level="warn",
-                    )
+                    self._trace.message("🛑 no load more button found", level="warn")
                     break
 
                 try:
@@ -253,7 +254,7 @@ class ReviewsScraperIkea:
 
                 try:
                     self._trace.message(
-                        "wait for modal to settle after pagination",
+                        "settle after pagination",
                         level="info",
                     )
                     await page.wait_for_timeout(self.DEFAULT_MODAL_SETTLE_MS)
@@ -271,13 +272,13 @@ class ReviewsScraperIkea:
         collected_reviews: list[Review],
         tab_name: str,
     ) -> None:
-        self._trace.message(f"capturing current tab state: {tab_name}", level="info")
-        with self._trace.step(f"load-more pagination for {tab_name}"):
+        self._trace.message(f"tab state: {tab_name}", level="info")
+        with self._trace.step(f"load more: {tab_name}"):
             await self._expand_all_reviews(page)
         self._trace.message(
-            f"load-more pagination exhausted for {tab_name}", level="info"
+            f"done loading: {tab_name}", level="info"
         )
-        with self._trace.step(f"extracting review cards for {tab_name}"):
+        with self._trace.step(f"extract: {tab_name}"):
             await self._capture_html_snapshot(
                 page,
                 product_url,
@@ -330,7 +331,7 @@ class ReviewsScraperIkea:
                 self._trace.message(f"tab skip: {normalized}", level="warn")
                 continue
 
-            self._trace.message(f"tab ok: {normalized}", level="info")
+            self._trace.message(f"tab found: {normalized}", level="info")
             is_active = False
             try:
                 is_active = (await tab.get_attribute("aria-selected")) == "true"
@@ -406,11 +407,11 @@ class ReviewsScraperIkea:
                                 timeout=self.DEFAULT_NAVIGATION_TIMEOUT_MS
                             )
                             await self._wait_for_review_ui_ready(page)
-                            self._trace.message("matched visible opener", level="info")
+                            self._trace.message("opened modal", level="info")
                             return
                         except PlaywrightTimeoutError:
                             self._trace.message(
-                                f"timed out waiting for review ui readiness after {self.REVIEW_UI_READY_TIMEOUT_MS}ms",
+                                f"review UI timeout after {self.REVIEW_UI_READY_TIMEOUT_MS}ms",
                                 level="warn",
                             )
                             continue
@@ -435,7 +436,7 @@ class ReviewsScraperIkea:
                 continue
 
         raise PlaywrightTimeoutError(
-            f"timed out waiting for review ui readiness after {self.REVIEW_UI_READY_TIMEOUT_MS}ms"
+            f"review UI timeout after {self.REVIEW_UI_READY_TIMEOUT_MS}ms"
         )
 
     async def _find_load_more_button(self, page):
@@ -493,13 +494,11 @@ class ReviewsScraperIkea:
         collected_reviews: list[Review],
         stage: str,
     ) -> int:
-        with self._trace.step(f"capturing HTML snapshot for {stage}"):
+        with self._trace.step(f"snapshot: {stage}"):
             html = await page.content()
             soup = BeautifulSoup(html, "html.parser")
             reviews = self._extract_reviews(soup, source_url=product_url)
-            self._trace.message(
-                f"parsed {len(reviews)} review candidates from DOM", level="info"
-            )
+            self._trace.message(f"parsed {len(reviews)} reviews", level="info")
 
             collected_reviews.extend(reviews)
             self._trace.message(
@@ -548,6 +547,7 @@ class ReviewsScraperIkea:
                     title=title,
                     body=body or "",
                     rating=rating,
+                    rating_scale_max=5,
                     source=ReviewSource.DOM,
                     source_url=source_url,
                 )
@@ -568,20 +568,30 @@ class ReviewsScraperIkea:
         return cards
 
     def _extract_text(self, node, selector: str) -> str | None:
-        child = node.select_one(selector)
-        if not child:
-            return None
-        text = child.get_text(" ", strip=True)
-        return text or None
+        for part in self._selector_parts(selector):
+            child = node.select_one(part)
+            if not child:
+                continue
+            text = child.get_text(" ", strip=True)
+            if text:
+                return text
+        return None
 
     def _extract_attr(self, node, selector: str, attribute: str) -> str | None:
-        child = node.select_one(selector)
-        if not child:
-            return None
-        value = child.get(attribute)
-        if value is None:
-            return None
-        return str(value).strip() or None
+        for part in self._selector_parts(selector):
+            child = node.select_one(part)
+            if not child:
+                continue
+            value = child.get(attribute)
+            if value is None:
+                continue
+            normalized = str(value).strip()
+            if normalized:
+                return normalized
+        return None
+
+    def _selector_parts(self, selector: str) -> list[str]:
+        return [part.strip() for part in selector.split(",") if part.strip()]
 
     def _extract_rating(self, value: str | None) -> float | None:
         if not value:

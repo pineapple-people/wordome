@@ -2,9 +2,12 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from time import perf_counter
 
+from rich.console import Group
 from rich.console import Console
 from rich.live import Live
+from rich.panel import Panel
 from rich.spinner import Spinner
+from rich.table import Table
 from rich.text import Text
 from rich.tree import Tree
 
@@ -154,6 +157,78 @@ class RichTraceLogger:
         value: str,
     ) -> None:
         self._render_callout(label, value)
+
+    def render_result(self, result, preview_reviews: int = 3) -> None:
+        reviews = list(getattr(result, "reviews", []) or [])
+        domain_metadata = getattr(
+            getattr(getattr(result, "metadata", None), "domain_metadata", None),
+            "review_tabs",
+            [],
+        )
+        rating_scales = {
+            getattr(review, "rating_scale_max", None)
+            for review in reviews
+            if getattr(review, "rating_scale_max", None) is not None
+        }
+        rating_scale_display = "mixed"
+        if len(rating_scales) == 1:
+            rating_scale_display = str(next(iter(rating_scales)))
+        elif not rating_scales:
+            rating_scale_display = "unknown"
+
+        summary = Table(
+            show_header=False,
+            box=None,
+            padding=(0, 1),
+        )
+        summary.add_column("field", style="bold cyan", no_wrap=True)
+        summary.add_column("value", style="white")
+        summary.add_row("Product", getattr(result, "product_url", ""))
+        review_page_url = getattr(result, "review_page_url", "") or ""
+        if review_page_url and review_page_url != getattr(result, "product_url", ""):
+            summary.add_row("Review URL", review_page_url)
+        summary.add_row(
+            "Reviews",
+            str(getattr(result, "reviews_count", None) or len(reviews)),
+        )
+        summary.add_row("Scale", rating_scale_display)
+        summary.add_row(
+            "Regions",
+            ", ".join(domain_metadata) if domain_metadata else "none",
+        )
+
+        renderables = [Panel(summary, title="Review Result", border_style="cyan")]
+
+        if reviews:
+            preview = Table(title=f"Sample ({min(preview_reviews, len(reviews))})")
+            preview.add_column("Author", style="bold cyan", no_wrap=True)
+            preview.add_column("Title", style="bold")
+            preview.add_column("Rating", style="magenta", no_wrap=True)
+            preview.add_column("Excerpt", style="white")
+            for review in reviews[:preview_reviews]:
+                body = getattr(review, "body", "") or ""
+                excerpt = body.strip().replace("\n", " ")
+                if len(excerpt) > 90:
+                    excerpt = excerpt[:87].rstrip() + "..."
+                rating_value = getattr(review, "rating", None)
+                scale_max = getattr(review, "rating_scale_max", None)
+                rating_display = "—"
+                if rating_value is not None:
+                    rating_display = (
+                        f"{rating_value:g}/{scale_max}"
+                        if scale_max is not None
+                        else f"{rating_value:g}"
+                    )
+
+                preview.add_row(
+                    getattr(review, "author", "") or "anonymous",
+                    getattr(review, "title", "") or "",
+                    rating_display,
+                    excerpt,
+                )
+            renderables.append(preview)
+
+        self.console.print(Group(*renderables))
 
     def _status(
         self,
