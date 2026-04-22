@@ -13,7 +13,12 @@ from wordome.domain.reviews.models import (
     ReviewScrapeResult,
     ReviewSource,
 )
-from wordome.support import RichTraceLogger, current_trace, use_trace
+from wordome.support import (
+    RichLiveTraceLogger,
+    RichTraceLogger,
+    current_trace,
+    use_trace,
+)
 
 
 class ReviewsScraperIkea:
@@ -78,7 +83,7 @@ class ReviewsScraperIkea:
     REVIEW_MODAL_PAGINATION_SELECTOR = "div.ugc-rr-pip-fe-reviews__load-more"
 
     def __init__(self, consider_other_tabs: bool = False) -> None:
-        self._default_trace = RichTraceLogger(self.__class__.__name__)
+        self._default_trace = RichLiveTraceLogger(self.__class__.__name__)
         self.consider_other_tabs = consider_other_tabs
 
     @property
@@ -86,7 +91,7 @@ class ReviewsScraperIkea:
         return current_trace() or self._default_trace
 
     async def scrape(self, product_url: str) -> ReviewScrapeResult:
-        trace = RichTraceLogger(self.__class__.__name__)
+        trace = RichLiveTraceLogger(self.__class__.__name__)
         html: str | None = None
         collected_reviews: list[Review] = []
         scraped_tabs: list[str] = []

@@ -1,3 +1,8 @@
-from .rich_trace import RichTraceLogger, current_trace, use_trace
+from .rich_trace import RichLiveTraceLogger, RichTraceLogger, current_trace, use_trace
 
-__all__ = ["RichTraceLogger", "current_trace", "use_trace"]
+__all__ = [
+    "RichLiveTraceLogger",
+    "RichTraceLogger",
+    "current_trace",
+    "use_trace",
+]

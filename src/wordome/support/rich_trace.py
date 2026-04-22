@@ -3,7 +3,10 @@ from contextvars import ContextVar
 from time import perf_counter
 
 from rich.console import Console
+from rich.live import Live
+from rich.spinner import Spinner
 from rich.text import Text
+from rich.tree import Tree
 
 
 class RichTraceLogger:
@@ -14,19 +17,51 @@ class RichTraceLogger:
     def __init__(self, scope: str):
         self.scope = scope
         self.console = Console(stderr=True, highlight=False, soft_wrap=True)
-        self._depth = 0
+        self._tree = Tree(Text(self.scope, style="dim"))
+        self._stack: list[Tree] = [self._tree]
+        self._live = Live(
+            self._tree,
+            console=self.console,
+            transient=False,
+            auto_refresh=True,
+            refresh_per_second=20,
+        )
+        self._live_started = False
 
-    def _indent(self, depth: int | None = None) -> str:
-        depth = self._depth if depth is None else depth
-        if depth <= 0:
-            return ""
-        return "│   " * (depth - 1) + "├── "
+    def start(self) -> None:
+        if self._live_started:
+            return
+        self._live.__enter__()
+        self._live_started = True
+        self._refresh()
+
+    def stop(self) -> None:
+        if not self._live_started:
+            return
+        self._refresh()
+        self._live.__exit__(None, None, None)
+        self._live_started = False
+
+    def _refresh(self) -> None:
+        if self._live_started:
+            self._live.update(self._tree, refresh=True)
+
+    def _current_node(self) -> Tree:
+        return self._stack[-1]
+
+    def _active_step_label(self, label: str):
+        return Text(label, style="bold cyan")
 
     def _render(self, message: str, style: str, depth: int | None = None) -> None:
+        if self._live_started:
+            self._current_node().add(Text(message, style=style))
+            self._refresh()
+            return
         text = Text()
         text.append(self.scope, style="dim")
         text.append(" ", style="dim")
-        text.append(self._indent(depth), style="dim")
+        if depth:
+            text.append("│   " * (depth - 1) + "├── ", style="dim")
         text.append(message, style=style)
         self.console.print(text)
 
@@ -47,10 +82,19 @@ class RichTraceLogger:
         label_style: str = "bold cyan",
         value_style: str = "bold #a855f7",
     ) -> None:
+        if self._live_started:
+            text = Text()
+            text.append(label, style=label_style)
+            text.append(": ", style="dim")
+            text.append(value, style=value_style)
+            self._current_node().add(text)
+            self._refresh()
+            return
         text = Text()
         text.append(self.scope, style="dim")
         text.append(" ", style="dim")
-        text.append(self._indent(depth), style="dim")
+        if depth:
+            text.append("│   " * (depth - 1) + "├── ", style="dim")
         text.append(label, style=label_style)
         text.append(": ", style="dim")
         text.append(value, style=value_style)
@@ -67,10 +111,25 @@ class RichTraceLogger:
         detail_label_style: str = "bold #ff8ad6",
         detail_value_style: str = "bold #ff8ad6",
     ) -> None:
+        if self._live_started:
+            text = Text()
+            text.append(label, style="bold cyan")
+            text.append("  ", style="dim")
+            text.append(f"[{status}]", style=status_style)
+            if detail_label and detail_value:
+                text.append("  ", style="dim")
+                text.append(f"[{detail_label}", style=detail_label_style)
+                text.append(" ", style="dim")
+                text.append(detail_value, style=detail_value_style)
+                text.append("]", style=detail_label_style)
+            self._current_node().label = text
+            self._refresh()
+            return
         text = Text()
         text.append(self.scope, style="dim")
         text.append(" ", style="dim")
-        text.append(self._indent(depth), style="dim")
+        if depth:
+            text.append("│   " * (depth - 1) + "├── ", style="dim")
         text.append(label, style="bold cyan")
         text.append("  ", style="dim")
         text.append(f"[{status}]", style=status_style)
@@ -121,32 +180,66 @@ class RichTraceLogger:
     @contextmanager
     def step(self, label: str):
         start = perf_counter()
-        depth = self._depth
-        self._render(label, "bold cyan", depth=depth)
-        self._depth += 1
+        if not self._live_started:
+            self.start()
+        branch = self._current_node().add(self._active_step_label(label))
+        self._stack.append(branch)
+        self._refresh()
         try:
             yield
         except Exception as exc:
             elapsed = perf_counter() - start
-            self._depth -= 1
-            self._status(
+            branch.label = self._status_text(
                 label,
                 "failed",
-                depth=depth,
                 detail_label="after",
                 detail_value=f"{elapsed:.2f}s: {exc}",
+                status_style="bold red",
             )
+            self._refresh()
+            self._stack.pop()
             raise
         else:
             elapsed = perf_counter() - start
-            self._depth -= 1
-            self._status(
+            branch.label = self._status_text(
                 label,
                 "done",
-                depth=depth,
                 detail_label="runtime:",
                 detail_value=f"{elapsed:.2f}s",
+                status_style="green",
             )
+            self._refresh()
+            self._stack.pop()
+
+    def _status_text(
+        self,
+        label: str,
+        state: str,
+        *,
+        status_style: str,
+        detail_label: str | None = None,
+        detail_value: str | None = None,
+    ) -> Text:
+        text = Text()
+        text.append(label, style="bold cyan")
+        text.append("  ", style="dim")
+        text.append(f"[{state}]", style=status_style)
+        if detail_label and detail_value:
+            text.append("  ", style="dim")
+            text.append(f"[{detail_label}", style="bold #ff8ad6")
+            text.append(" ", style="dim")
+            text.append(detail_value, style="bold #ff8ad6")
+            text.append("]", style="bold #ff8ad6")
+        return text
+
+
+class RichLiveTraceLogger(RichTraceLogger):
+    """
+    Rich-backed tracer with a live spinner cue for the active step.
+    """
+
+    def _active_step_label(self, label: str):
+        return Spinner("dots", text=label, style="cyan")
 
 
 _TRACE_CONTEXT: ContextVar[RichTraceLogger | None] = ContextVar(
@@ -161,8 +254,10 @@ def current_trace() -> RichTraceLogger | None:
 
 @contextmanager
 def use_trace(trace: RichTraceLogger):
+    trace.start()
     token = _TRACE_CONTEXT.set(trace)
     try:
         yield trace
     finally:
         _TRACE_CONTEXT.reset(token)
+        trace.stop()
