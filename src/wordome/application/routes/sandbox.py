@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 
 from wordome.domain import ReviewsScraper
@@ -9,7 +9,6 @@ from wordome.infrastructure.database.snowflake_repository import SnowflakeReposi
 router = APIRouter(prefix="/sandbox", tags=["sandbox"])
 web_fetcher = WebFetcher()
 review_detector = ReviewSectionDetector()
-ikea_scraper: ReviewsScraper = ReviewsScraperIkea()
 
 
 def _get_repository() -> SnowflakeRepository:
@@ -41,6 +40,13 @@ async def fetch_headers():
 
 class FetchRequest(BaseModel):
     url: str
+
+
+def _get_ikea_scraper(request: Request) -> ReviewsScraper:
+    scraper = getattr(request.app.state, "ikea_scraper", None)
+    if not isinstance(scraper, ReviewsScraperIkea):
+        raise RuntimeError("IKEA scraper is not configured on app.state")
+    return scraper
 
 
 @router.post("/fetch/html")
@@ -84,9 +90,13 @@ async def db_ping(
 
 
 @router.post("/reviews/ikea")
-async def scrape_reviews_ikea(request: FetchRequest):
+async def scrape_reviews_ikea(
+    request: FetchRequest,
+    ikea_scraper: ReviewsScraper = Depends(_get_ikea_scraper),
+):
     """
     IKEA PDP review scrape using SSR review cards.
     """
     result = await ikea_scraper.scrape(request.url)
+    ikea_scraper.render_result(result)
     return result

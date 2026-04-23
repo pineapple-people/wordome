@@ -46,13 +46,40 @@ conda install -c conda-forge beautifulsoup4
 ```
 
 ### Running the app
+Command shape:
+```bash
+> wordome [--mode {api,demo}] [--trace [live|buffered]]
 ```
-# API service
-# Note: this alias is defined in within pyproject.toml
+
+Optional args:
+```bash
+# Switch modes (`api` is the default)
+> --mode demo
+
+# Set scrape trace mode
+# If no value is given, `--trace` defaults to `live`
+> --trace
+> --trace live
+> --trace buffered
+
+# Show CLI help and examples
+> --help
+```
+
+Examples:
+```
+# API service (default mode)
+# Note: this alias is defined within pyproject.toml
 > wordome
 
 # Demo mode (executes a fixed flow that showcases basic functionality)
 > wordome --mode demo
+
+# API service with buffered scrape trace output
+> wordome --trace buffered
+
+# Show CLI help and examples
+> wordome --help
 ```
 
 ## Utility
