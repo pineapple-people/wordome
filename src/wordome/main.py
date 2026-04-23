@@ -27,17 +27,15 @@ def main():
         help="Set scrape trace mode. If no value is given, `--trace` defaults to `live`.",
     )
     args = parser.parse_args()
-    from wordome.application.routes.sandbox import configure_ikea_scraper_trace
-
     trace_mode = TraceMode(args.trace) if args.trace else TraceMode.LIVE
-    configure_ikea_scraper_trace(trace_mode)
     if args.mode == "demo":
         from wordome.demo import run_demo
 
         run_demo()
     else:
-        from wordome.app import app
+        from wordome.app import create_app
 
+        app = create_app(trace_mode=trace_mode)
         uvicorn.run(app, host="127.0.0.1", port=8000)
 
 
