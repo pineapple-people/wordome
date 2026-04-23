@@ -396,7 +396,7 @@ class RichLiveTraceLogger(RichTraceLogger):
         return Spinner("dots", text=label, style="cyan")
 
 
-class NullTraceLogger:
+class NoOpTraceLogger:
     def __init__(self, scope: str):
         self.scope = scope
 
@@ -422,9 +422,9 @@ class NullTraceLogger:
 
 def create_trace(
     scope: str, mode: TraceMode = TraceMode.BUFFERED
-) -> RichTraceLogger | NullTraceLogger:
+) -> RichTraceLogger | NoOpTraceLogger:
     if mode == TraceMode.OFF:
-        return NullTraceLogger(scope)
+        return NoOpTraceLogger(scope)
     if mode == TraceMode.LIVE:
         return RichLiveTraceLogger(scope)
     return RichTraceLogger(scope, buffered=True)

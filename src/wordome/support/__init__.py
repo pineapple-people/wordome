@@ -1,5 +1,5 @@
 from .rich_trace import (
-    NullTraceLogger,
+    NoOpTraceLogger,
     RichLiveTraceLogger,
     RichTraceLogger,
     TraceMode,
@@ -7,7 +7,7 @@ from .rich_trace import (
 )
 
 __all__ = [
-    "NullTraceLogger",
+    "NoOpTraceLogger",
     "RichLiveTraceLogger",
     "RichTraceLogger",
     "TraceMode",
