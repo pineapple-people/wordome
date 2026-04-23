@@ -13,7 +13,7 @@ from wordome.domain.reviews.models import (
     ReviewScrapeResult,
     ReviewSource,
 )
-from wordome.support import RichLiveTraceLogger, current_trace, use_trace
+from wordome.support import TraceMode, create_trace
 
 
 class ReviewsScraperIkea:
@@ -32,9 +32,9 @@ class ReviewsScraperIkea:
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/123.0.0.0 Safari/537.36"
     )
-    REVIEW_MODAL_OPEN_SETTLE_MS = 1_000
+    REVIEW_MODAL_OPEN_SETTLE_MS = 750
     DEFAULT_MODAL_SETTLE_MS = 250
-    REVIEW_UI_READY_TIMEOUT_MS = 2_000
+    REVIEW_UI_READY_TIMEOUT_MS = 1_000
     DEFAULT_MAX_LOAD_MORE_CLICKS = 20
     REVIEW_MODAL_TAB_SCOPE = ".ugc-rr-pip-fe-modal-wrapper--open"
     REVIEW_REGION_TAB_ALLOWLIST = ("United States", "Other countries")
@@ -79,24 +79,35 @@ class ReviewsScraperIkea:
     )
     # REVIEW_API_MARKER = "web-api.ikea.com/tugc/public/v5/reviews/"
 
-    def __init__(self, consider_other_tabs: bool = False) -> None:
-        self._default_trace = RichLiveTraceLogger(self.__class__.__name__)
-        self.consider_other_tabs = consider_other_tabs
+    def __init__(
+        self,
+        check_other_lang_tabs: bool = False,
+        trace_mode: TraceMode = TraceMode.OFF,
+    ) -> None:
+        self.check_other_lang_tabs = check_other_lang_tabs
+        self.trace_mode = trace_mode
 
-    @property
-    def _trace(self) -> RichLiveTraceLogger:
-        return current_trace() or self._default_trace
+    def set_trace_mode(self, trace_mode: TraceMode) -> None:
+        self.trace_mode = trace_mode
+
+    def _create_trace(self):
+        return create_trace(
+            self.__class__.__name__,
+            self.trace_mode,
+        )
 
     def render_result(self, result: ReviewScrapeResult) -> None:
-        self._default_trace.render_result(result)
+        trace = self._create_trace()
+        trace.render_result(result)
 
     async def scrape(self, product_url: str) -> ReviewScrapeResult:
-        trace = RichLiveTraceLogger(self.__class__.__name__)
+        trace = self._create_trace()
         html: str | None = None
         collected_reviews: list[Review] = []
         scraped_tabs: list[str] = []
 
-        with use_trace(trace):
+        trace.start()
+        try:
             trace.message(f"scraping product page: {product_url}", level="info")
 
             with trace.step("total scrape"):
@@ -113,29 +124,30 @@ class ReviewsScraperIkea:
                     page = await context.new_page()
 
                     try:
-                        await self._goto(page, product_url)
+                        await self._goto(trace, page, product_url)
 
-                        with self._trace.step("discovering review entry point"):
-                            await self._wait_for_reviews_entry_point(page)
+                        with trace.step("discovering review entry point"):
+                            await self._wait_for_reviews_entry_point(trace, page)
 
-                        with self._trace.step("open reviews modal"):
+                        with trace.step("open reviews modal"):
                             await self._open_reviews_modal(
+                                trace,
                                 page,
                                 product_url,
                                 collected_reviews,
                             )
 
-                        if self.consider_other_tabs:
-                            review_tabs = await self._discover_review_tabs(page)
+                        if self.check_other_lang_tabs:
+                            review_tabs = await self._discover_review_tabs(trace, page)
                             if not review_tabs:
                                 review_tabs = ["United States"]
 
-                            self._trace.message(
+                            trace.message(
                                 "tabs found: " + ", ".join(review_tabs),
                                 level="info",
                             )
                         else:
-                            self._trace.message(
+                            trace.message(
                                 "tabs off; United States only",
                                 level="info",
                             )
@@ -143,12 +155,13 @@ class ReviewsScraperIkea:
 
                         for index, tab_name in enumerate(review_tabs):
                             if index > 0 and not await self._switch_review_tab(
-                                page, tab_name
+                                trace, page, tab_name
                             ):
                                 continue
 
-                            with self._trace.step(f"tab: {tab_name}"):
+                            with trace.step(f"tab: {tab_name}"):
                                 await self._scrape_active_modal_tab(
+                                    trace,
                                     page,
                                     product_url,
                                     collected_reviews,
@@ -156,13 +169,15 @@ class ReviewsScraperIkea:
                                 )
                             scraped_tabs.append(tab_name)
                         html = await page.content()
-                        self._trace.message(
+                        trace.message(
                             f"scrape complete: {len(collected_reviews)} reviews",
                             level="info",
                         )
                     finally:
                         await context.close()
                         await browser.close()
+        finally:
+            trace.stop()
 
         if not html:
             return ReviewScrapeResult(
@@ -186,8 +201,8 @@ class ReviewsScraperIkea:
             ),
         )
 
-    async def _goto(self, page, product_url: str) -> None:
-        with self._trace.step("opening product page in browser"):
+    async def _goto(self, trace, page, product_url: str) -> None:
+        with trace.step("opening product page in browser"):
             try:
                 await page.goto(
                     product_url,
@@ -195,8 +210,8 @@ class ReviewsScraperIkea:
                     timeout=self.DEFAULT_NAVIGATION_TIMEOUT_MS,
                 )
             except Exception as e:
-                self._trace.message(f"navigation failed: {e}", level="error")
-                self._trace.message(
+                trace.message(f"navigation failed: {e}", level="error")
+                trace.message(
                     "commit navigation failed; retrying page load via domcontentloaded",
                     level="warn",
                 )
@@ -206,80 +221,75 @@ class ReviewsScraperIkea:
                     timeout=self.DEFAULT_NAVIGATION_TIMEOUT_MS,
                 )
 
-    async def _wait_for_reviews_entry_point(self, page) -> None:
-        with self._trace.step("checking for review entry point in page shell"):
+    async def _wait_for_reviews_entry_point(self, trace, page) -> None:
+        with trace.step("checking for review entry point in page shell"):
             try:
                 await page.wait_for_selector(
                     ", ".join(self.REVIEW_ENTRY_SELECTORS),
                     timeout=5_000,
                 )
             except PlaywrightTimeoutError:
-                self._trace.message(
+                trace.message(
                     "review entry point not found quickly; continuing",
                     level="warn",
                 )
 
-    async def _expand_all_reviews(
-        self,
-        page,
-    ) -> None:
+    async def _expand_all_reviews(self, trace, page) -> None:
         for click_index in range(self.DEFAULT_MAX_LOAD_MORE_CLICKS):
-            with self._trace.step(f"load-more iteration {click_index + 1}"):
-                await self._nudge_reviews_panel(page)
-                button, selector = await self._find_load_more_button(page)
+            with trace.step(f"load-more iteration {click_index + 1}"):
+                await self._nudge_reviews_panel(trace, page)
+                button, selector = await self._find_load_more_button(trace, page)
                 if button is None:
-                    self._trace.message("🛑 no load more button found", level="warn")
+                    trace.message("🛑 no load more button found", level="warn")
                     break
 
                 try:
                     await button.scroll_into_view_if_needed(timeout=5_000)
                 except Exception as e:
-                    self._trace.message(f"scroll into view failed: {e}", level="error")
+                    trace.message(f"scroll into view failed: {e}", level="error")
 
                 try:
-                    self._trace.callout("selector", selector)
-                    self._trace.message("clicking load more button", level="info")
+                    trace.callout("selector", selector)
+                    trace.message("clicking load more button", level="info")
                     await button.click(timeout=self.DEFAULT_NAVIGATION_TIMEOUT_MS)
                 except Exception as e:
-                    self._trace.message(
-                        "load-more click failed; stopping", level="warn"
-                    )
-                    self._trace.message(f"click failed: {e}", level="error")
+                    trace.message("load-more click failed; stopping", level="warn")
+                    trace.message(f"click failed: {e}", level="error")
                     break
 
                 try:
-                    self._trace.message(
+                    trace.message(
                         "settle after pagination",
                         level="info",
                     )
                     await page.wait_for_timeout(self.DEFAULT_MODAL_SETTLE_MS)
                 except Exception as e:
-                    self._trace.message(
-                        "post-click settle failed; stopping", level="warn"
-                    )
-                    self._trace.message(f"settle wait failed: {e}", level="error")
+                    trace.message("post-click settle failed; stopping", level="warn")
+                    trace.message(f"settle wait failed: {e}", level="error")
                     break
 
     async def _scrape_active_modal_tab(
         self,
+        trace,
         page,
         product_url: str,
         collected_reviews: list[Review],
         tab_name: str,
     ) -> None:
-        self._trace.message(f"tab state: {tab_name}", level="info")
-        with self._trace.step(f"load more: {tab_name}"):
-            await self._expand_all_reviews(page)
-        self._trace.message(f"done loading: {tab_name}", level="info")
-        with self._trace.step(f"extract: {tab_name}"):
+        trace.message(f"tab state: {tab_name}", level="info")
+        with trace.step(f"load more: {tab_name}"):
+            await self._expand_all_reviews(trace, page)
+        trace.message(f"done loading: {tab_name}", level="info")
+        with trace.step(f"extract: {tab_name}"):
             await self._capture_html_snapshot(
+                trace,
                 page,
                 product_url,
                 collected_reviews,
                 tab_name,
             )
 
-    async def _discover_review_tabs(self, page) -> list[str]:
+    async def _discover_review_tabs(self, trace, page) -> list[str]:
         selected_tabs: list[str] = []
         unselected_tabs: list[str] = []
         modal = page.locator(self.REVIEW_MODAL_TAB_SCOPE)
@@ -295,7 +305,7 @@ class ReviewsScraperIkea:
                 if not await tab.is_visible():
                     continue
             except Exception as e:
-                self._trace.message(f"tab visibility failed: {e}", level="warn")
+                trace.message(f"tab visibility failed: {e}", level="warn")
                 continue
 
             text = None
@@ -321,10 +331,10 @@ class ReviewsScraperIkea:
                 controls = None
 
             if not self._is_review_tab(normalized, controls):
-                self._trace.message(f"tab skip: {normalized}", level="warn")
+                trace.message(f"tab skip: {normalized}", level="warn")
                 continue
 
-            self._trace.message(f"tab found: {normalized}", level="info")
+            trace.message(f"tab found: {normalized}", level="info")
             is_active = False
             try:
                 is_active = (await tab.get_attribute("aria-selected")) == "true"
@@ -353,7 +363,7 @@ class ReviewsScraperIkea:
         controls = (aria_controls or "").strip()
         return controls in self.REVIEW_TAB_CONTROLS
 
-    async def _switch_review_tab(self, page, tab_name: str) -> bool:
+    async def _switch_review_tab(self, trace, page, tab_name: str) -> bool:
         tab = page.get_by_role("tab", name=tab_name)
         if await tab.count() == 0:
             return False
@@ -365,11 +375,12 @@ class ReviewsScraperIkea:
             await page.wait_for_timeout(self.DEFAULT_MODAL_SETTLE_MS)
             return True
         except Exception as e:
-            self._trace.message(f"tab switch failed: {e}", level="error")
+            trace.message(f"tab switch failed: {e}", level="error")
             return False
 
     async def _open_reviews_modal(
         self,
+        trace,
         page,
         product_url: str,
         collected_reviews: list[Review],
@@ -377,16 +388,16 @@ class ReviewsScraperIkea:
         """
         Open the IKEA reviews modal / expanded review view if a trigger is present.
         """
-        with self._trace.step("pre-probe settle"):
+        with trace.step("pre-probe settle"):
             await page.wait_for_timeout(self.REVIEW_MODAL_OPEN_SETTLE_MS)
 
         for selector in self.REVIEW_MODAL_OPENERS:
-            with self._trace.step("selector probe"):
-                self._trace.callout("selector", selector)
+            with trace.step("selector probe"):
+                trace.callout("selector", selector)
                 locator = page.locator(selector)
                 count = await locator.count()
                 if count == 0:
-                    self._trace.message("no matches", level="warn")
+                    trace.message("no matches", level="warn")
                     continue
 
                 try:
@@ -400,21 +411,19 @@ class ReviewsScraperIkea:
                                 timeout=self.DEFAULT_NAVIGATION_TIMEOUT_MS
                             )
                             await self._wait_for_review_ui_ready(page)
-                            self._trace.message("opened modal", level="info")
+                            trace.message("opened modal", level="info")
                             return
                         except PlaywrightTimeoutError:
-                            self._trace.message(
+                            trace.message(
                                 f"review UI timeout after {self.REVIEW_UI_READY_TIMEOUT_MS}ms",
                                 level="warn",
                             )
                             continue
                         except Exception as e:
-                            self._trace.message(
-                                f"selector click failed: {e}", level="error"
-                            )
+                            trace.message(f"selector click failed: {e}", level="error")
                             continue
                 except Exception as e:
-                    self._trace.message(f"selector probe failed: {e}", level="error")
+                    trace.message(f"selector probe failed: {e}", level="error")
                     continue
 
     async def _wait_for_review_ui_ready(self, page) -> None:
@@ -432,7 +441,7 @@ class ReviewsScraperIkea:
             f"review UI timeout after {self.REVIEW_UI_READY_TIMEOUT_MS}ms"
         )
 
-    async def _find_load_more_button(self, page):
+    async def _find_load_more_button(self, trace, page):
         for selector in self.LOAD_MORE_SELECTORS:
             locator = page.locator(selector)
             count = await locator.count()
@@ -447,15 +456,13 @@ class ReviewsScraperIkea:
                     if await button.is_disabled():
                         continue
                 except Exception as e:
-                    self._trace.message(
-                        f"load-more control probe failed: {e}", level="error"
-                    )
+                    trace.message(f"load-more control probe failed: {e}", level="error")
                     continue
                 return button, selector
 
         return None, None
 
-    async def _nudge_reviews_panel(self, page) -> None:
+    async def _nudge_reviews_panel(self, trace, page) -> None:
         """
         IKEA renders the reviews inside a scrollable modal content wrapper.
         Move that container to the bottom so the next page/load-more control is
@@ -470,33 +477,32 @@ class ReviewsScraperIkea:
                 await page.wait_for_timeout(500)
                 return
             except Exception as e:
-                self._trace.message(f"modal content scroll failed: {e}", level="error")
+                trace.message(f"modal content scroll failed: {e}", level="error")
 
         for _ in range(3):
             try:
                 await page.mouse.wheel(0, 1800)
             except Exception as e:
-                self._trace.message(f"mouse wheel failed: {e}", level="error")
+                trace.message(f"mouse wheel failed: {e}", level="error")
                 break
             await page.wait_for_timeout(300)
 
     async def _capture_html_snapshot(
         self,
+        trace,
         page,
         product_url: str,
         collected_reviews: list[Review],
         stage: str,
     ) -> int:
-        with self._trace.step(f"snapshot: {stage}"):
+        with trace.step(f"snapshot: {stage}"):
             html = await page.content()
             soup = BeautifulSoup(html, "html.parser")
             reviews = self._extract_reviews(soup, source_url=product_url)
-            self._trace.message(f"parsed {len(reviews)} reviews", level="info")
+            trace.message(f"parsed {len(reviews)} reviews", level="info")
 
             collected_reviews.extend(reviews)
-            self._trace.message(
-                f"{stage} snapshot: +{len(reviews)} reviews", level="info"
-            )
+            trace.message(f"{stage} snapshot: +{len(reviews)} reviews", level="info")
             return len(reviews)
 
     def _extract_summary(self, soup: BeautifulSoup) -> str | None:

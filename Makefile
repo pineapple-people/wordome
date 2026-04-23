@@ -1,4 +1,7 @@
-.PHONY: ruff ruff-check check-ruff
+.PHONY: wordome ruff ruff-check check-ruff
+
+wordome:
+	@wordome
 
 check-ruff:
 	@command -v ruff >/dev/null 2>&1 || (echo "❌ Ruff is not installed. Please run the Anaconda(miniconda) setup to trigger the installation"; exit 1)

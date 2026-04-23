@@ -1,5 +1,5 @@
 from contextlib import contextmanager
-from contextvars import ContextVar
+from enum import StrEnum
 from time import perf_counter
 
 from rich.console import Console, Group
@@ -11,14 +11,23 @@ from rich.text import Text
 from rich.tree import Tree
 
 
+class TraceMode(StrEnum):
+    OFF = "off"
+    BUFFERED = "buffered"
+    LIVE = "live"
+
+
 class RichTraceLogger:
     """
     Lightweight rich-backed tracer that renders nested steps as a tree.
     """
 
-    def __init__(self, scope: str):
+    def __init__(self, scope: str, buffered: bool = False):
         self.scope = scope
         self.console = Console(stderr=True, highlight=False, soft_wrap=True)
+        self._buffered = buffered
+        self._buffer: list[Text] = []
+        self._depth = 0
         self._tree = Tree(Text(self.scope, style="dim"))
         self._stack: list[Tree] = [self._tree]
         self._live = Live(
@@ -31,6 +40,8 @@ class RichTraceLogger:
         self._live_started = False
 
     def start(self) -> None:
+        if self._buffered:
+            return
         if self._live_started:
             return
         self._live.__enter__()
@@ -38,11 +49,31 @@ class RichTraceLogger:
         self._refresh()
 
     def stop(self) -> None:
+        if self._buffered:
+            for renderable in self._buffer:
+                self.console.print(renderable)
+            self._buffer.clear()
+            return
         if not self._live_started:
             return
         self._refresh()
         self._live.__exit__(None, None, None)
         self._live_started = False
+
+    def _emit(self, renderable) -> None:
+        if self._buffered:
+            self._buffer.append(renderable)
+            return
+        self.console.print(renderable)
+
+    def _prefix(self, depth: int | None = None) -> Text:
+        prefix_depth = self._depth if depth is None else depth
+        text = Text()
+        text.append(self.scope, style="dim")
+        text.append(" ", style="dim")
+        if prefix_depth:
+            text.append("│   " * (prefix_depth - 1) + "├── ", style="dim")
+        return text
 
     def _refresh(self) -> None:
         if self._live_started:
@@ -55,15 +86,16 @@ class RichTraceLogger:
         return Text(label, style="bold cyan")
 
     def _render(self, message: str, style: str, depth: int | None = None) -> None:
+        if self._buffered:
+            text = self._prefix(depth)
+            text.append(message, style=style)
+            self._emit(text)
+            return
         if self._live_started:
             self._current_node().add(Text(message, style=style))
             self._refresh()
             return
-        text = Text()
-        text.append(self.scope, style="dim")
-        text.append(" ", style="dim")
-        if depth:
-            text.append("│   " * (depth - 1) + "├── ", style="dim")
+        text = self._prefix(depth)
         text.append(message, style=style)
         self.console.print(text)
 
@@ -84,6 +116,13 @@ class RichTraceLogger:
         label_style: str = "bold cyan",
         value_style: str = "bold #a855f7",
     ) -> None:
+        if self._buffered:
+            text = self._prefix(depth)
+            text.append(label, style=label_style)
+            text.append(": ", style="dim")
+            text.append(value, style=value_style)
+            self._emit(text)
+            return
         if self._live_started:
             text = Text()
             text.append(label, style=label_style)
@@ -92,11 +131,7 @@ class RichTraceLogger:
             self._current_node().add(text)
             self._refresh()
             return
-        text = Text()
-        text.append(self.scope, style="dim")
-        text.append(" ", style="dim")
-        if depth:
-            text.append("│   " * (depth - 1) + "├── ", style="dim")
+        text = self._prefix(depth)
         text.append(label, style=label_style)
         text.append(": ", style="dim")
         text.append(value, style=value_style)
@@ -113,6 +148,19 @@ class RichTraceLogger:
         detail_label_style: str = "bold #ff8ad6",
         detail_value_style: str = "bold #ff8ad6",
     ) -> None:
+        if self._buffered:
+            text = self._prefix(depth)
+            text.append(label, style="bold cyan")
+            text.append("  ", style="dim")
+            text.append(f"[{status}]", style=status_style)
+            if detail_label and detail_value:
+                text.append("  ", style="dim")
+                text.append(f"[{detail_label}", style=detail_label_style)
+                text.append(" ", style="dim")
+                text.append(detail_value, style=detail_value_style)
+                text.append("]", style=detail_label_style)
+            self._emit(text)
+            return
         if self._live_started:
             text = Text()
             text.append(label, style="bold cyan")
@@ -127,11 +175,7 @@ class RichTraceLogger:
             self._current_node().label = text
             self._refresh()
             return
-        text = Text()
-        text.append(self.scope, style="dim")
-        text.append(" ", style="dim")
-        if depth:
-            text.append("│   " * (depth - 1) + "├── ", style="dim")
+        text = self._prefix(depth)
         text.append(label, style="bold cyan")
         text.append("  ", style="dim")
         text.append(f"[{status}]", style=status_style)
@@ -254,6 +298,42 @@ class RichTraceLogger:
     @contextmanager
     def step(self, label: str):
         start = perf_counter()
+        if self._buffered:
+            depth = self._depth
+            start_text = self._prefix(depth)
+            start_text.append(label, style="bold cyan")
+            self._emit(start_text)
+            self._depth += 1
+            try:
+                yield
+            except Exception as exc:
+                elapsed = perf_counter() - start
+                self._depth -= 1
+                fail_text = self._prefix(depth)
+                fail_text.append(label, style="bold cyan")
+                fail_text.append("  ", style="dim")
+                fail_text.append("[failed]", style="bold red")
+                fail_text.append("  ", style="dim")
+                fail_text.append("[after", style="bold #ff8ad6")
+                fail_text.append(" ", style="dim")
+                fail_text.append(f"{elapsed:.2f}s: {exc}", style="bold #ff8ad6")
+                fail_text.append("]", style="bold #ff8ad6")
+                self._emit(fail_text)
+                raise
+            else:
+                elapsed = perf_counter() - start
+                self._depth -= 1
+                done_text = self._prefix(depth)
+                done_text.append(label, style="bold cyan")
+                done_text.append("  ", style="dim")
+                done_text.append("[done]", style="green")
+                done_text.append("  ", style="dim")
+                done_text.append("[runtime:", style="bold #ff8ad6")
+                done_text.append(" ", style="dim")
+                done_text.append(f"{elapsed:.2f}s", style="bold #ff8ad6")
+                done_text.append("]", style="bold #ff8ad6")
+                self._emit(done_text)
+            return
         if not self._live_started:
             self.start()
         branch = self._current_node().add(self._active_step_label(label))
@@ -316,22 +396,35 @@ class RichLiveTraceLogger(RichTraceLogger):
         return Spinner("dots", text=label, style="cyan")
 
 
-_TRACE_CONTEXT: ContextVar[RichTraceLogger | None] = ContextVar(
-    "wordome_rich_trace",
-    default=None,
-)
+class NullTraceLogger:
+    def __init__(self, scope: str):
+        self.scope = scope
+
+    def start(self) -> None:
+        return
+
+    def stop(self) -> None:
+        return
+
+    def message(self, message: str, level: str = "default") -> None:
+        return
+
+    def callout(self, label: str, value: str) -> None:
+        return
+
+    def render_result(self, result, preview_reviews: int = 3) -> None:
+        return
+
+    @contextmanager
+    def step(self, label: str):
+        yield
 
 
-def current_trace() -> RichTraceLogger | None:
-    return _TRACE_CONTEXT.get()
-
-
-@contextmanager
-def use_trace(trace: RichTraceLogger):
-    trace.start()
-    token = _TRACE_CONTEXT.set(trace)
-    try:
-        yield trace
-    finally:
-        _TRACE_CONTEXT.reset(token)
-        trace.stop()
+def create_trace(
+    scope: str, mode: TraceMode = TraceMode.BUFFERED
+) -> RichTraceLogger | NullTraceLogger:
+    if mode == TraceMode.OFF:
+        return NullTraceLogger(scope)
+    if mode == TraceMode.LIVE:
+        return RichLiveTraceLogger(scope)
+    return RichTraceLogger(scope, buffered=True)
