@@ -2,7 +2,7 @@ import uvicorn
 from fastapi import FastAPI
 
 from wordome.application.routes import health, sandbox
-from wordome.infrastructure import ReviewsScraperIkea
+from wordome.infrastructure import ReviewsScraperIkea, SnowflakeRepository
 from wordome.support import TraceMode
 
 
@@ -12,6 +12,7 @@ def create_app(trace_mode: TraceMode = TraceMode.LIVE) -> FastAPI:
         description="Web scraping and word frequency analysis",
     )
     app.state.ikea_scraper = ReviewsScraperIkea(trace_mode=trace_mode)
+    app.state.snowflake_repository = SnowflakeRepository()
     app.include_router(health.router)
     app.include_router(sandbox.router)
     return app

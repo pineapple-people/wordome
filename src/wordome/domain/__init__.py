@@ -10,6 +10,7 @@ from .reviews import (
     ReviewScrapeMetadata,
     ReviewScrapeResult,
     ReviewSource,
+    ReviewsRepository,
     ReviewsScraper,
 )
 
@@ -21,6 +22,7 @@ __all__ = [
     "ReviewScrapeResult",
     "ReviewSectionDetector",
     "ReviewSource",
+    "ReviewsRepository",
     "ReviewsScraper",
     "WordStats",
     "WordStatsExtractor",

@@ -1,4 +1,4 @@
-from .interfaces import ReviewsScraper
+from .interfaces import ReviewsRepository, ReviewsScraper
 from .models import (
     Review,
     ReviewScrapeDomainMetadata,
@@ -13,5 +13,6 @@ __all__ = [
     "ReviewScrapeMetadata",
     "ReviewScrapeResult",
     "ReviewSource",
+    "ReviewsRepository",
     "ReviewsScraper",
 ]
