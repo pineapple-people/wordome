@@ -27,9 +27,7 @@ async def bootstrap_snowflake() -> dict[str, object]:
 
     quoted_database = _quote_identifier(config.database)
     quoted_schema = _quote_identifier(config.schema)
-    table_name = (
-        f"{quoted_database}.{quoted_schema}.{ReviewScrapeRecord.__tablename__}"
-    )
+    table_name = f"{quoted_database}.{quoted_schema}.{ReviewScrapeRecord.__tablename__}"
 
     await connection.run_session(
         lambda session: session.execute(
