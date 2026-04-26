@@ -13,7 +13,6 @@ def main():
             "Examples:\n"
             "  wordome                 Run the API with live scrape trace output.\n"
             "  wordome --mode demo     Run the demo flow.\n"
-            "  wordome --mode snapshot-demo  Run the local snapshot repository smoke demo.\n"
             "  wordome --mode bootstrap-snowflake  Create the configured database, schema, and tables.\n"
             "  wordome --trace         Run the API with live scrape trace output.\n"
             "  wordome --trace buffered  Run the API with buffered scrape trace output.\n"
@@ -23,7 +22,7 @@ def main():
     parser.add_argument(
         "--mode",
         "-m",
-        choices=["demo", "snapshot-demo", "bootstrap-snowflake", "api"],
+        choices=["demo", "bootstrap-snowflake", "api"],
         default="api",
     )
     parser.add_argument(
@@ -39,10 +38,6 @@ def main():
         from wordome.demo import run_demo
 
         run_demo()
-    elif args.mode == "snapshot-demo":
-        from wordome.snapshot_demo import run_snapshot_demo
-
-        run_snapshot_demo()
     elif args.mode == "bootstrap-snowflake":
         import asyncio
 
