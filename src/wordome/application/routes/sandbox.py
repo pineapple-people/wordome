@@ -13,6 +13,9 @@ review_detector = ReviewSectionDetector()
 
 def _get_repository(request: Request) -> SnowflakeRepository:
     repository = getattr(request.app.state, "snowflake_repository", None)
+    if repository is None:
+        repository = SnowflakeRepository()
+        request.app.state.snowflake_repository = repository
     if not isinstance(repository, SnowflakeRepository):
         raise RuntimeError("Snowflake repository is not configured on app.state")
     return repository
@@ -32,7 +35,6 @@ async def sandbox_root():
             "/reviews/ikea",
             "/db/ping",
             "/db/health",
-            "/db/bootstrap",
             "/db/reviews/ikea",
             "/db/reviews/latest",
             "/db/reviews/recent",
@@ -123,16 +125,6 @@ async def db_health(
     Return repository-level Snowflake diagnostics.
     """
     return await sf_repository.get_repository_health()
-
-
-@router.post("/db/bootstrap")
-async def db_bootstrap(
-    sf_repository: SnowflakeRepository = Depends(_get_repository),
-):
-    """
-    Create the configured Snowflake database, schema, and review snapshot table.
-    """
-    return await sf_repository.bootstrap_database_and_schema(include_tables=True)
 
 
 @router.post("/db/reviews/ikea")

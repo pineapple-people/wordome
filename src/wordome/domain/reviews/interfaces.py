@@ -8,8 +8,6 @@ class ReviewsScraper(Protocol):
 
 
 class ReviewsRepository(Protocol):
-    async def ensure_schema(self) -> None: ...
-
     async def append_scrape_snapshot(self, result: ReviewScrapeResult) -> str: ...
 
     async def get_latest_snapshot(

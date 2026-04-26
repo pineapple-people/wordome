@@ -13,7 +13,7 @@ def main():
             "Examples:\n"
             "  wordome                 Run the API with live scrape trace output.\n"
             "  wordome --mode demo     Run the demo flow.\n"
-            "  wordome --mode bootstrap-snowflake  Create the configured database, schema, and tables.\n"
+            "  python scripts/bootstrap_snowflake.py  Create the configured database, schema, and tables.\n"
             "  wordome --trace         Run the API with live scrape trace output.\n"
             "  wordome --trace buffered  Run the API with buffered scrape trace output.\n"
             "  wordome --help          Show this help message.\n"
@@ -22,7 +22,7 @@ def main():
     parser.add_argument(
         "--mode",
         "-m",
-        choices=["demo", "bootstrap-snowflake", "api"],
+        choices=["demo", "api"],
         default="api",
     )
     parser.add_argument(
@@ -38,17 +38,6 @@ def main():
         from wordome.demo import run_demo
 
         run_demo()
-    elif args.mode == "bootstrap-snowflake":
-        import asyncio
-
-        from wordome.infrastructure.database.snowflake_repository import (
-            SnowflakeRepository,
-        )
-
-        result = asyncio.run(
-            SnowflakeRepository().bootstrap_database_and_schema(include_tables=True)
-        )
-        print(result)
     else:
         from wordome.app import create_app
 

@@ -122,3 +122,18 @@ SNOWFLAKE_WAREHOUSE=COMPUTE_WH
 
 The repo includes a matching [`.env.example`](/Users/pototo/codebase/wordome/.env.example) template.
 Note: Provide actual credential values locally in `.env` file (avoid comitting this actual file)
+
+### Snowflake SQL - Bootstrap
+Snowflake database/schema/table setup is an explicit bootstrap step and is no longer performed by the runtime app automatically.
+The runtime app now assumes this bootstrap has already been run before Snowflake-backed reads and writes.
+
+Run this after first-time credential setup, or when the pre-migration snapshot table shape changes:
+
+```bash
+> make bootstrap-snowflake
+```
+
+This bootstrap flow is designed to be idempotent:
+- it creates the configured database and schema if missing
+- it creates the `review_scrapes` table if missing
+- it applies the current one-time legacy snapshot column alignment if needed

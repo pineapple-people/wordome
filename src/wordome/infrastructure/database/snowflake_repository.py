@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import desc, select, text
+from sqlalchemy import desc, select
 
 from wordome.domain.reviews.models import ReviewScrapeResult
 from wordome.infrastructure.database.review_scrape_orm import ReviewScrapeRecord
@@ -23,20 +23,6 @@ class SnowflakeRepository:
     def __init__(self, connection: SnowflakeConnection | None = None):
         self._connection = connection or SnowflakeConnection()
         self._config = get_snowflake_config() if connection is None else None
-
-    @staticmethod
-    def _quote_identifier(identifier: str) -> str:
-        escaped = identifier.replace('"', '""')
-        return f'"{escaped}"'
-
-    @staticmethod
-    def _is_safe_rename_noop(exc: Exception) -> bool:
-        message = str(exc).lower()
-        return (
-            "does not exist" in message
-            or "invalid identifier" in message
-            or "already exists" in message
-        )
 
     async def is_connected(self) -> bool:
         return await self._connection.is_connected()
@@ -111,60 +97,13 @@ class SnowflakeRepository:
         result["grants_to_current_role"] = await self._safe_grants_to_current_role()
         return result
 
-    async def bootstrap_database_and_schema(
-        self, *, include_tables: bool = True
-    ) -> dict[str, Any]:
-        if self._config is None:
-            raise RuntimeError("Bootstrapping requires a configured Snowflake target.")
-
-        quoted_database = self._quote_identifier(self._config.database)
-        quoted_schema = self._quote_identifier(self._config.schema)
-
-        await self._connection.run_session(
-            lambda session: session.execute(
-                text(f"CREATE DATABASE IF NOT EXISTS {quoted_database}")
-            )
-        )
-        await self._connection.run_session(
-            lambda session: session.execute(
-                text(f"CREATE SCHEMA IF NOT EXISTS {quoted_database}.{quoted_schema}")
-            )
-        )
-
-        tables_created = False
-        if include_tables:
-            await self.ensure_schema()
-            tables_created = True
-
-        return {
-            "success": True,
-            "database": self._config.database,
-            "schema": self._config.schema,
-            "tables_created": tables_created,
-            "review_scrapes_table": self.REVIEW_SCRAPES_TABLE,
-        }
-
-    async def ensure_schema(self) -> None:
-        try:
-            await self._connection.create_all()
-            if self._config is not None:
-                await self._align_review_scrapes_table_schema()
-        except Exception as exc:
-            raise RuntimeError(
-                "Failed to ensure the review_scrapes persistence schema is aligned. "
-                "Run the Snowflake bootstrap/alignment path and inspect the underlying "
-                f"database error. Original error: {exc}"
-            ) from exc
-
     async def append_scrape_snapshot(self, result: ReviewScrapeResult) -> str:
-        await self.ensure_schema()
         record = ReviewScrapeResultCodec.to_record(result)
         record.snapshot_event_id = record.snapshot_event_id or str(uuid4())
         record.scraped_at = record.scraped_at or datetime.utcnow()
         return await self._connection.insert_review_scrape_record(record)
 
     async def get_latest_snapshot(self, product_url: str) -> ReviewScrapeResult | None:
-        await self.ensure_schema()
         record = await self._connection.run_session(
             lambda session: session.execute(
                 select(ReviewScrapeRecord)
@@ -180,7 +119,6 @@ class SnowflakeRepository:
     async def list_snapshots(
         self, product_url: str, limit: int = 10
     ) -> list[ReviewScrapeResult]:
-        await self.ensure_schema()
         records = await self._connection.run_session(
             lambda session: (
                 session.execute(
@@ -226,75 +164,3 @@ class SnowflakeRepository:
             return await self._connection.show_grants_to_current_role()
         except Exception:
             return []
-
-    async def _align_review_scrapes_table_schema(self) -> None:
-        if self._config is None:
-            return
-        quoted_database = self._quote_identifier(self._config.database)
-        quoted_schema = self._quote_identifier(self._config.schema)
-        table_name = f"{quoted_database}.{quoted_schema}.{self.REVIEW_SCRAPES_TABLE}"
-        try:
-            await self._connection.run_session(
-                lambda session: session.execute(
-                    text(
-                        f"""
-                        ALTER TABLE {table_name}
-                        RENAME COLUMN snapshot_id TO snapshot_event_id
-                        """
-                    )
-                )
-            )
-        except Exception as exc:
-            if not self._is_safe_rename_noop(exc):
-                raise RuntimeError(
-                    "Failed to rename legacy column 'snapshot_id' to "
-                    f"'snapshot_event_id' on {table_name}. Original error: {exc}"
-                ) from exc
-
-        try:
-            await self._connection.run_session(
-                lambda session: session.execute(
-                    text(
-                        f"""
-                        ALTER TABLE {table_name}
-                        ADD COLUMN IF NOT EXISTS snapshot_hash STRING
-                        """
-                    )
-                )
-            )
-        except Exception as exc:
-            raise RuntimeError(
-                f"Failed to add or verify 'snapshot_hash' on {table_name}. "
-                f"Original error: {exc}"
-            ) from exc
-
-        try:
-            await self._connection.run_session(
-                lambda session: session.execute(
-                    text(
-                        f"""
-                        UPDATE {table_name}
-                        SET snapshot_hash = COALESCE(
-                            snapshot_hash,
-                            SHA2(
-                                TO_JSON(
-                                    OBJECT_CONSTRUCT_KEEP_NULL(
-                                        'product_url', product_url,
-                                        'review_page_url', review_page_url,
-                                        'reviews_count', reviews_count,
-                                        'metadata', metadata,
-                                        'reviews', reviews
-                                    )
-                                ),
-                                256
-                            )
-                        )
-                        """
-                    )
-                )
-            )
-        except Exception as exc:
-            raise RuntimeError(
-                f"Failed to backfill 'snapshot_hash' values on {table_name}. "
-                f"Original error: {exc}"
-            ) from exc
