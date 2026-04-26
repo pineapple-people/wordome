@@ -107,7 +107,7 @@ async def db_ping(
     """
     try:
         return {
-            "success": await sf_repository._connection.is_connected(),
+            "success": await sf_repository.is_connected(),
             "message": None,
             "error": None,
         }

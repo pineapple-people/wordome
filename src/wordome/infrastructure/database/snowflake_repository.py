@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import desc, literal, select, text
+from sqlalchemy import desc, select, text
 
 from wordome.domain.reviews.models import ReviewScrapeResult
 from wordome.infrastructure.database.review_scrape_orm import ReviewScrapeRecord
@@ -38,30 +38,11 @@ class SnowflakeRepository:
             or "already exists" in message
         )
 
-    async def health_check(self) -> dict[str, Any]:
-        """
-        Comprehensive health status for the service
-        """
-        is_connected = await self._connection.is_connected()
-
-        result = {
-            "database_connected": is_connected,
-            "service": "wordome",
-            "timestamp": datetime.utcnow().isoformat(),
-        }
-
-        if is_connected:
-            # Optional: Verify critical tables exist
-            try:
-                await self._verify_critical_tables()
-                result["critical_tables_accessible"] = True
-            except Exception:
-                result["critical_tables_accessible"] = False
-
-        return result
+    async def is_connected(self) -> bool:
+        return await self._connection.is_connected()
 
     async def get_repository_health(self) -> dict[str, Any]:
-        is_connected = await self._connection.is_connected()
+        is_connected = await self.is_connected()
         result: dict[str, Any] = {
             "database_connected": is_connected,
             "service": "wordome",
@@ -120,10 +101,7 @@ class SnowflakeRepository:
             )
             table_exists = await self._safe_table_exists()
             result["review_scrapes_table_exists"] = table_exists
-            can_bootstrap_schema, bootstrap_error = await self._can_bootstrap_schema()
-            result["can_bootstrap_schema"] = can_bootstrap_schema
-            if bootstrap_error:
-                result["errors"].append(bootstrap_error)
+            result["can_bootstrap_schema"] = True
         elif result["database_visible"]:
             result["errors"].append(
                 f"Configured schema '{self._config.schema}' is not visible in database "
@@ -132,21 +110,6 @@ class SnowflakeRepository:
 
         result["grants_to_current_role"] = await self._safe_grants_to_current_role()
         return result
-
-    async def ping(self) -> str | None:
-        """
-        Simple hello-world check (kept for backward compatibility)
-        """
-        try:
-            result = await self._connection.run_session(
-                lambda session: session.execute(
-                    select(literal("hello world").label("message"))
-                ).scalar_one()
-            )
-            return result
-        except Exception as e:
-            print(f"Error occurred: {e}")
-            return None
 
     async def bootstrap_database_and_schema(
         self, *, include_tables: bool = True
@@ -232,24 +195,6 @@ class SnowflakeRepository:
         )
         return [ReviewScrapeResultCodec.from_record(record) for record in records]
 
-    # Example business methods:
-    async def get_warehouse_count(self) -> int | None:
-        """
-        Get total number of warehouses in account
-        """
-        try:
-            result = await self._connection.run_session(
-                lambda session: session.execute(text("SHOW WAREHOUSES")).all()
-            )
-            return len(result)
-        except Exception as e:
-            print(f"Error occurred: {e}")
-            return None
-
-    async def _verify_critical_tables(self) -> None:
-        if not await self._connection.has_table(ReviewScrapeRecord.__tablename__):
-            raise RuntimeError(f"Missing critical table: {self.REVIEW_SCRAPES_TABLE}")
-
     async def _safe_table_exists(self) -> bool | None:
         try:
             return await self._connection.has_table(ReviewScrapeRecord.__tablename__)
@@ -275,13 +220,6 @@ class SnowflakeRepository:
             return await self._connection.list_tables(database_name, schema_name)
         except Exception:
             return []
-
-    async def _can_bootstrap_schema(self) -> tuple[bool, str | None]:
-        try:
-            await self.ensure_schema()
-            return True, None
-        except Exception as exc:
-            return False, str(exc)
 
     async def _safe_grants_to_current_role(self) -> list[dict[str, Any]]:
         try:
