@@ -1,4 +1,5 @@
 import asyncio
+import json
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from typing import Any, TypeVar
@@ -9,9 +10,6 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from wordome.infrastructure.database.review_scrape_orm import Base, ReviewScrapeRecord
-from wordome.infrastructure.database.review_scrape_result_codec import (
-    ReviewScrapeResultCodec,
-)
 from wordome.infrastructure.database.snowflake_config import get_snowflake_config
 
 T = TypeVar("T")
@@ -226,12 +224,8 @@ class SnowflakeConnection:
                 "reviews_count": record.reviews_count,
                 "source_name": record.source_name,
                 "pipeline_version": record.pipeline_version,
-                "metadata_json": ReviewScrapeResultCodec.serialize_metadata_json(
-                    record.metadata_payload
-                ),
-                "reviews_json": ReviewScrapeResultCodec.serialize_reviews_json(
-                    record.reviews_payload
-                ),
+                "metadata_json": json.dumps(record.metadata_payload),
+                "reviews_json": json.dumps(record.reviews_payload),
                 "scraped_at": record.scraped_at,
             },
         )

@@ -16,7 +16,7 @@ class ReviewScrapeResultCodec:
     """Translate ORM persistence records to and from review domain DTOs."""
 
     @staticmethod
-    def serialize_metadata(metadata: ReviewScrapeMetadata) -> dict[str, Any]:
+    def _serialize_metadata(metadata: ReviewScrapeMetadata) -> dict[str, Any]:
         return {
             "domain_metadata": {
                 "review_tabs": metadata.domain_metadata.review_tabs,
@@ -24,7 +24,7 @@ class ReviewScrapeResultCodec:
         }
 
     @staticmethod
-    def serialize_reviews(reviews: list[Review]) -> list[dict[str, Any]]:
+    def _serialize_reviews(reviews: list[Review]) -> list[dict[str, Any]]:
         return [
             {
                 "author": review.author,
@@ -38,14 +38,6 @@ class ReviewScrapeResultCodec:
             }
             for review in reviews
         ]
-
-    @staticmethod
-    def serialize_metadata_json(metadata_payload: dict[str, Any]) -> str:
-        return json.dumps(metadata_payload)
-
-    @staticmethod
-    def serialize_reviews_json(reviews_payload: list[dict[str, Any]]) -> str:
-        return json.dumps(reviews_payload)
 
     @staticmethod
     def compute_snapshot_hash(
@@ -68,8 +60,8 @@ class ReviewScrapeResultCodec:
 
     @staticmethod
     def to_record(result: ReviewScrapeResult) -> ReviewScrapeRecord:
-        metadata_payload = ReviewScrapeResultCodec.serialize_metadata(result.metadata)
-        reviews_payload = ReviewScrapeResultCodec.serialize_reviews(result.reviews)
+        metadata_payload = ReviewScrapeResultCodec._serialize_metadata(result.metadata)
+        reviews_payload = ReviewScrapeResultCodec._serialize_reviews(result.reviews)
         return ReviewScrapeRecord(
             product_url=result.product_url,
             review_page_url=result.review_page_url,
