@@ -124,9 +124,6 @@ The repo includes a matching [`.env.example`](/Users/pototo/codebase/wordome/.en
 Note: Provide actual credential values locally in `.env` file (avoid comitting this actual file)
 
 ### Snowflake SQL - Bootstrap
-Snowflake database/schema/table setup is an explicit bootstrap step and is no longer performed by the runtime app automatically.
-The runtime app now assumes this bootstrap has already been run before Snowflake-backed reads and writes.
-
 Run this after first-time credential setup, or when the pre-migration snapshot table shape changes:
 
 ```bash
