@@ -13,12 +13,18 @@ def main():
             "Examples:\n"
             "  wordome                 Run the API with live scrape trace output.\n"
             "  wordome --mode demo     Run the demo flow.\n"
+            "  python scripts/bootstrap_snowflake.py  Create the configured database, schema, and tables.\n"
             "  wordome --trace         Run the API with live scrape trace output.\n"
             "  wordome --trace buffered  Run the API with buffered scrape trace output.\n"
             "  wordome --help          Show this help message.\n"
         ),
     )
-    parser.add_argument("--mode", "-m", choices=["demo", "api"], default="api")
+    parser.add_argument(
+        "--mode",
+        "-m",
+        choices=["demo", "api"],
+        default="api",
+    )
     parser.add_argument(
         "--trace",
         nargs="?",
