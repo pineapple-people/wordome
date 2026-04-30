@@ -13,8 +13,16 @@ from .reviews import (
     ReviewsRepository,
     ReviewsScraper,
 )
+from .sitemaps import (
+    RetailerSitemapProfile,
+    SitemapCrawlRecordObservation,
+    SitemapPdpDiscoverer,
+    SitemapPdpDiscoveryResult,
+    SitemapTraversalStats,
+)
 
 __all__ = [
+    "RetailerSitemapProfile",
     "Review",
     "ReviewDetectionResult",
     "ReviewScrapeDomainMetadata",
@@ -24,6 +32,10 @@ __all__ = [
     "ReviewSource",
     "ReviewsRepository",
     "ReviewsScraper",
+    "SitemapCrawlRecordObservation",
+    "SitemapPdpDiscoverer",
+    "SitemapPdpDiscoveryResult",
+    "SitemapTraversalStats",
     "WordStats",
     "WordStatsExtractor",
 ]

@@ -3,7 +3,11 @@ import asyncio
 from sqlalchemy import text
 
 from wordome.infrastructure.database.review_scrape_orm import ReviewScrapeRecord
-from wordome.infrastructure.database.snowflake_config import get_snowflake_config
+from wordome.infrastructure.database.sitemap_crawl_orm import (
+    SitemapCrawlRecord,
+    SitemapCrawlRunRecord,
+)
+from wordome.infrastructure.database.snowflake_config import get_snowflake_profile
 from wordome.infrastructure.database.snowflake_connection import SnowflakeConnection
 
 
@@ -22,11 +26,11 @@ def _is_safe_rename_noop(exc: Exception) -> bool:
 
 
 async def bootstrap_snowflake() -> dict[str, object]:
-    config = get_snowflake_config()
+    config = get_snowflake_profile()
     connection = SnowflakeConnection()
 
     quoted_database = _quote_identifier(config.database)
-    quoted_schema = _quote_identifier(config.schema)
+    quoted_schema = _quote_identifier(config.schema_name)
     table_name = f"{quoted_database}.{quoted_schema}.{ReviewScrapeRecord.__tablename__}"
 
     await connection.run_session(
@@ -73,8 +77,10 @@ async def bootstrap_snowflake() -> dict[str, object]:
     return {
         "success": True,
         "database": config.database,
-        "schema": config.schema,
+        "schema": config.schema_name,
         "review_scrapes_table": ReviewScrapeRecord.__tablename__,
+        "sitemap_crawl_runs_table": SitemapCrawlRunRecord.__tablename__,
+        "sitemap_crawl_records_table": SitemapCrawlRecord.__tablename__,
     }
 
 

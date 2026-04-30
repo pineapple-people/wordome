@@ -5,11 +5,20 @@ from uuid import uuid4
 from sqlalchemy import desc, select
 
 from wordome.domain.reviews.models import ReviewScrapeResult
+from wordome.domain.sitemaps import (
+    SitemapCrawlRecordObservation,
+    SitemapPdpDiscoveryResult,
+)
 from wordome.infrastructure.database.review_scrape_orm import ReviewScrapeRecord
 from wordome.infrastructure.database.review_scrape_result_codec import (
     ReviewScrapeResultCodec,
 )
-from wordome.infrastructure.database.snowflake_config import get_snowflake_config
+from wordome.infrastructure.database.sitemap_crawl_orm import (
+    SitemapCrawlRecord,
+    SitemapCrawlRunRecord,
+    SitemapCrawlRunStatus,
+)
+from wordome.infrastructure.database.snowflake_config import get_snowflake_profile
 from wordome.infrastructure.database.snowflake_connection import SnowflakeConnection
 
 
@@ -19,10 +28,12 @@ class SnowflakeRepository:
     """
 
     REVIEW_SCRAPES_TABLE = ReviewScrapeRecord.__tablename__
+    SITEMAP_CRAWL_RUNS_TABLE = SitemapCrawlRunRecord.__tablename__
+    SITEMAP_CRAWL_RECORDS_TABLE = SitemapCrawlRecord.__tablename__
 
     def __init__(self, connection: SnowflakeConnection | None = None):
         self._connection = connection or SnowflakeConnection()
-        self._config = get_snowflake_config() if connection is None else None
+        self._config = get_snowflake_profile() if connection is None else None
 
     async def is_connected(self) -> bool:
         return await self._connection.is_connected()
@@ -34,8 +45,10 @@ class SnowflakeRepository:
             "service": "wordome",
             "timestamp": datetime.utcnow().isoformat(),
             "configured_database": self._config.database if self._config else None,
-            "configured_schema": self._config.schema if self._config else None,
+            "configured_schema": self._config.schema_name if self._config else None,
             "review_scrapes_table": self.REVIEW_SCRAPES_TABLE,
+            "sitemap_crawl_runs_table": self.SITEMAP_CRAWL_RUNS_TABLE,
+            "sitemap_crawl_records_table": self.SITEMAP_CRAWL_RECORDS_TABLE,
             "current_context": None,
             "database_visible": None,
             "schema_visible": None,
@@ -72,7 +85,7 @@ class SnowflakeRepository:
                 self._config.database
             )
             result["accessible_schemas_in_configured_database"] = accessible_schemas
-            result["schema_visible"] = self._config.schema in accessible_schemas
+            result["schema_visible"] = self._config.schema_name in accessible_schemas
         else:
             result["errors"].append(
                 f"Configured database '{self._config.database}' is not visible."
@@ -83,14 +96,14 @@ class SnowflakeRepository:
                 "accessible_tables_in_configured_schema"
             ] = await self._list_accessible_tables(
                 self._config.database,
-                self._config.schema,
+                self._config.schema_name,
             )
             table_exists = await self._safe_table_exists()
             result["review_scrapes_table_exists"] = table_exists
             result["can_bootstrap_schema"] = True
         elif result["database_visible"]:
             result["errors"].append(
-                f"Configured schema '{self._config.schema}' is not visible in database "
+                f"Configured schema '{self._config.schema_name}' is not visible in database "
                 f"'{self._config.database}'."
             )
 
@@ -102,6 +115,150 @@ class SnowflakeRepository:
         record.snapshot_event_id = record.snapshot_event_id or str(uuid4())
         record.scraped_at = record.scraped_at or datetime.utcnow()
         return await self._connection.insert_review_scrape_record(record)
+
+    async def create_sitemap_crawl_run(
+        self,
+        *,
+        retailer_name: str,
+        entrypoint_url: str,
+    ) -> str:
+        record = SitemapCrawlRunRecord(
+            retailer_name=retailer_name,
+            entrypoint_url=entrypoint_url,
+            status=SitemapCrawlRunStatus.RUNNING.value,
+        )
+
+        def _insert(session):
+            session.add(record)
+            session.flush()
+            return record.crawl_run_id
+
+        return await self._connection.run_session(_insert)
+
+    async def finalize_sitemap_crawl_run(
+        self,
+        *,
+        crawl_run_id: str,
+        result: SitemapPdpDiscoveryResult,
+    ) -> str:
+        def _update(session):
+            record = session.get(SitemapCrawlRunRecord, crawl_run_id)
+            if record is None:
+                raise RuntimeError(f"Missing sitemap crawl run: {crawl_run_id}")
+            record.processed_sitemaps_count = len(result.processed_sitemaps)
+            record.skipped_sitemaps_count = len(result.skipped_sitemaps)
+            record.discovered_url_count = len(result.pdp_urls)
+            record.error_count = len(result.errors)
+            record.completed_at = datetime.utcnow()
+            record.status = (
+                SitemapCrawlRunStatus.COMPLETED_WITH_ERRORS.value
+                if result.errors
+                else SitemapCrawlRunStatus.COMPLETED.value
+            )
+            session.flush()
+            return record.crawl_run_id
+
+        return await self._connection.run_session(_update)
+
+    async def upsert_sitemap_crawl_records(
+        self,
+        *,
+        crawl_run_id: str,
+        retailer_name: str,
+        records: list[SitemapCrawlRecordObservation],
+    ) -> dict[str, int]:
+        observed_at = datetime.utcnow()
+
+        def _upsert(session):
+            inserted_count = 0
+            updated_count = 0
+            unchanged_count = 0
+            existing_records: dict[str, SitemapCrawlRecord] = {}
+            record_urls = [record.record_url for record in records]
+            chunk_size = 1000
+            for chunk_start in range(0, len(record_urls), chunk_size):
+                chunk_urls = record_urls[chunk_start : chunk_start + chunk_size]
+                chunk_records = (
+                    session.execute(
+                        select(SitemapCrawlRecord).where(
+                            SitemapCrawlRecord.retailer_name == retailer_name,
+                            SitemapCrawlRecord.record_url.in_(chunk_urls),
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                existing_records.update(
+                    {record.record_url: record for record in chunk_records}
+                )
+
+            for observation in records:
+                record = existing_records.get(observation.record_url)
+                if record is None:
+                    record = SitemapCrawlRecord(
+                        retailer_name=retailer_name,
+                        record_url=observation.record_url,
+                        parent_url=observation.parent_url,
+                        record_type=observation.record_type,
+                        url_type=observation.url_type,
+                        depth=observation.depth,
+                        first_encountered_at=observed_at,
+                        latest_encountered_at=observed_at,
+                        times_seen=1,
+                        first_crawl_run_id=crawl_run_id,
+                        last_crawl_run_id=crawl_run_id,
+                        record_status=observation.record_status,
+                        skip_reason=observation.skip_reason,
+                        child_sitemap_count=observation.child_sitemap_count,
+                        child_url_count=observation.child_url_count,
+                        last_error_message=observation.last_error_message,
+                    )
+                    session.add(record)
+                    existing_records[observation.record_url] = record
+                    inserted_count += 1
+                else:
+                    state_changed = any(
+                        [
+                            record.parent_url != observation.parent_url,
+                            record.record_type != observation.record_type,
+                            record.url_type != observation.url_type,
+                            record.depth != observation.depth,
+                            record.record_status != observation.record_status,
+                            record.skip_reason != observation.skip_reason,
+                            record.child_sitemap_count
+                            != observation.child_sitemap_count,
+                            record.child_url_count != observation.child_url_count,
+                            record.last_error_message != observation.last_error_message,
+                        ]
+                    )
+                    record.parent_url = observation.parent_url
+                    record.record_type = observation.record_type
+                    record.url_type = observation.url_type
+                    record.depth = observation.depth
+                    record.latest_encountered_at = observed_at
+                    record.times_seen += 1
+                    record.last_crawl_run_id = crawl_run_id
+                    record.record_status = observation.record_status
+                    record.skip_reason = observation.skip_reason
+                    record.child_sitemap_count = observation.child_sitemap_count
+                    record.child_url_count = observation.child_url_count
+                    record.last_error_message = observation.last_error_message
+                    if state_changed:
+                        updated_count += 1
+                    else:
+                        unchanged_count += 1
+
+            session.flush()
+            return {
+                "inserted_record_count": inserted_count,
+                "updated_record_count": updated_count,
+                "unchanged_record_count": unchanged_count,
+                "touched_record_count": inserted_count
+                + updated_count
+                + unchanged_count,
+            }
+
+        return await self._connection.run_session(_upsert)
 
     async def get_latest_snapshot(self, product_url: str) -> ReviewScrapeResult | None:
         record = await self._connection.run_session(

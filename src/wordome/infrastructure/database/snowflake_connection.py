@@ -10,7 +10,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from wordome.infrastructure.database.review_scrape_orm import Base, ReviewScrapeRecord
-from wordome.infrastructure.database.snowflake_config import get_snowflake_config
+from wordome.infrastructure.database.snowflake_config import get_snowflake_profile
 
 T = TypeVar("T")
 
@@ -21,19 +21,19 @@ class SnowflakeConnection:
     def __init__(self, engine: Engine | None = None):
         self._config = None
         if engine is not None:
-            ReviewScrapeRecord.__table__.schema = None
+            self._set_table_schemas(None)
             self._engine = engine
         else:
-            self._config = get_snowflake_config()
-            qualified_schema = f"{self._config.database}.{self._config.schema}"
-            ReviewScrapeRecord.__table__.schema = qualified_schema
+            self._config = get_snowflake_profile()
+            qualified_schema = f"{self._config.database}.{self._config.schema_name}"
+            self._set_table_schemas(qualified_schema)
             self._engine = create_engine(
                 URL(
                     account=self._config.account,
                     user=self._config.user,
                     password=self._config.password,
                     database=self._config.database,
-                    schema=self._config.schema,
+                    schema=self._config.schema_name,
                     warehouse=self._config.warehouse,
                 )
             )
@@ -46,6 +46,10 @@ class SnowflakeConnection:
             bind=self._engine,
             expire_on_commit=False,
         )
+
+    def _set_table_schemas(self, schema: str | None) -> None:
+        for table in Base.metadata.tables.values():
+            table.schema = schema
 
     async def _run(self, fn, *args, **kwargs):
         """Run blocking SQLAlchemy work in a worker thread."""
