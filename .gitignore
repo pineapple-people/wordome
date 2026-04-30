@@ -22,6 +22,9 @@ Thumbs.db
 # Logs
 *.log
 
+# Generated sitemap crawl artifacts
+src/wordome/resources/*_pdp_links*.txt
+
 # Distribution / Build
 build/
 develop-eggs/

@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from hashlib import sha256
 from typing import Any, TypeVar
+from zoneinfo import ZoneInfo
 
 from snowflake.sqlalchemy import URL
 from sqlalchemy import create_engine, inspect, select, text
@@ -16,7 +17,7 @@ from wordome.infrastructure.database.review_scrape_orm import (
     ReviewScrapeEntryRecord,
     ReviewScrapeRecord,
 )
-from wordome.infrastructure.database.snowflake_config import get_snowflake_config
+from wordome.infrastructure.database.snowflake_config import get_snowflake_profile
 
 T = TypeVar("T")
 
@@ -24,14 +25,16 @@ T = TypeVar("T")
 class SnowflakeConnection:
     """SQLAlchemy engine and session management for Snowflake."""
 
+    NEW_YORK_TZ = ZoneInfo("America/New_York")
+
     def __init__(self, engine: Engine | None = None):
         self._config = None
         if engine is not None:
             self._set_table_schema(None)
             self._engine = engine
         else:
-            self._config = get_snowflake_config()
-            qualified_schema = f"{self._config.database}.{self._config.schema}"
+            self._config = get_snowflake_profile()
+            qualified_schema = f"{self._config.database}.{self._config.schema_name}"
             self._set_table_schema(qualified_schema)
             self._engine = create_engine(
                 URL(
@@ -39,7 +42,7 @@ class SnowflakeConnection:
                     user=self._config.user,
                     password=self._config.password,
                     database=self._config.database,
-                    schema=self._config.schema,
+                    schema=self._config.schema_name,
                     warehouse=self._config.warehouse,
                 )
             )
@@ -212,9 +215,13 @@ class SnowflakeConnection:
             state.source_url = incoming_state.source_url
             state.source_name = incoming_state.source_name
             state.pipeline_version = incoming_state.pipeline_version
-            state.last_seen_at = datetime.now()
+            state.last_seen_at = SnowflakeConnection._new_york_now_naive()
         session.flush()
         return record.snapshot_event_id
+
+    @staticmethod
+    def _new_york_now_naive() -> datetime:
+        return datetime.now(SnowflakeConnection.NEW_YORK_TZ).replace(tzinfo=None)
 
     @staticmethod
     def _insert_review_scrape_record_snowflake(

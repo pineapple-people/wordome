@@ -82,6 +82,38 @@ Examples:
 > wordome --help
 ```
 
+### Sitemap PDP Discovery POC
+The sandbox API now includes a sitemap discovery endpoint that traverses a
+public sitemap entrypoint and returns candidate PDP links.
+
+Example request body:
+```json
+{
+  "retailer_name": "ikea"
+}
+```
+
+Ad hoc request body:
+```json
+{
+  "sitemap_url": "https://www.example.com/sitemap.xml",
+  "include_patterns": ["/product/", "/p/"],
+  "exclude_patterns": ["/blog/", "/category/"],
+  "max_depth": 3,
+  "max_sitemaps": 50
+}
+```
+
+Route:
+```bash
+POST /sandbox/discover/pdp-links
+```
+
+Dump-to-file route:
+```bash
+POST /sandbox/discover/pdp-links/dump
+```
+
 ## Utility
 
 ### Ruff (code quality tool)
@@ -89,6 +121,13 @@ Examples:
 # Run this as code changes are made to auto-format and lint code
 # Note: fails if corrections cannot be applied automatically
 > make ruff
+```
+
+### Smoke Check
+```bash
+# Run a lightweight smoke check without touching Snowflake:
+# verifies key module imports, ORM table registration, and app wiring.
+> make smoke-check
 ```
 
 ## Other Notes
@@ -116,7 +155,7 @@ SNOWFLAKE_ACCOUNT=...
 SNOWFLAKE_USER=...
 SNOWFLAKE_PASSWORD=...
 SNOWFLAKE_DATABASE=...
-SNOWFLAKE_SCHEMA=PUBLIC
+SNOWFLAKE_SCHEMA_NAME=PUBLIC
 SNOWFLAKE_WAREHOUSE=COMPUTE_WH
 ```
 
@@ -134,3 +173,5 @@ This bootstrap flow is designed to be idempotent:
 - it creates the configured database and schema if missing
 - it creates the `review_scrapes` table if missing
 - it creates the `review_scrape_records` current-state table if missing
+- it creates the `sitemap_crawl_runs` table if missing
+- it creates the `sitemap_crawl_records` table if missing
