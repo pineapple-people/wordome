@@ -204,8 +204,7 @@ class SnowflakeConnection:
                     source_name,
                     pipeline_version,
                     metadata,
-                    reviews,
-                    scraped_at
+                    reviews
                 )
                 SELECT
                     :snapshot_event_id,
@@ -216,8 +215,7 @@ class SnowflakeConnection:
                     :source_name,
                     :pipeline_version,
                     PARSE_JSON(:metadata_json),
-                    PARSE_JSON(:reviews_json),
-                    :scraped_at
+                    PARSE_JSON(:reviews_json)
                 """
             ),
             {
@@ -230,7 +228,6 @@ class SnowflakeConnection:
                 "pipeline_version": record.pipeline_version,
                 "metadata_json": json.dumps(record.metadata_payload),
                 "reviews_json": json.dumps(record.reviews_payload),
-                "scraped_at": record.scraped_at,
             },
         )
         return record.snapshot_event_id
