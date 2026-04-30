@@ -1,11 +1,14 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
 from sqlalchemy import desc, select
 
 from wordome.domain.reviews.models import ReviewScrapeResult
-from wordome.infrastructure.database.review_scrape_orm import ReviewScrapeRecord
+from wordome.infrastructure.database.review_scrape_orm import (
+    ReviewScrapeRecord,
+    eastern_now,
+)
 from wordome.infrastructure.database.review_scrape_result_codec import (
     ReviewScrapeResultCodec,
 )
@@ -32,7 +35,7 @@ class SnowflakeRepository:
         result: dict[str, Any] = {
             "database_connected": is_connected,
             "service": "wordome",
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "configured_database": self._config.database if self._config else None,
             "configured_schema": self._config.schema if self._config else None,
             "review_scrapes_table": self.REVIEW_SCRAPES_TABLE,
@@ -100,7 +103,7 @@ class SnowflakeRepository:
     async def append_scrape_snapshot(self, result: ReviewScrapeResult) -> str:
         record = ReviewScrapeResultCodec.to_record(result)
         record.snapshot_event_id = record.snapshot_event_id or str(uuid4())
-        record.scraped_at = record.scraped_at or datetime.utcnow()
+        record.scraped_at = record.scraped_at or eastern_now()
         return await self._connection.insert_review_scrape_record(record)
 
     async def get_latest_snapshot(self, product_url: str) -> ReviewScrapeResult | None:

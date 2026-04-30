@@ -1,12 +1,18 @@
 from datetime import datetime
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 from snowflake.sqlalchemy import VARIANT
-from sqlalchemy import DateTime, Integer, String, func
+from sqlalchemy import DateTime, Integer, String, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.types import JSON
 
 payload_type = JSON().with_variant(VARIANT, "snowflake")
+eastern_time_zone = ZoneInfo("America/New_York")
+
+
+def eastern_now() -> datetime:
+    return datetime.now(eastern_time_zone)
 
 
 class Base(DeclarativeBase):
@@ -42,8 +48,10 @@ class ReviewScrapeRecord(Base):
         "reviews", payload_type, nullable=False
     )
     scraped_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=False),
+        DateTime(timezone=True),
         nullable=False,
-        default=datetime.utcnow,
-        server_default=func.current_timestamp(),
+        default=eastern_now,
+        server_default=text(
+            "CONVERT_TIMEZONE('America/New_York', CURRENT_TIMESTAMP())"
+        ),
     )
