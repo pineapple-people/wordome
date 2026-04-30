@@ -4,10 +4,7 @@ from enum import StrEnum
 
 class ReviewSource(StrEnum):
     DOM = "dom"
-    NETWORK = "network"
     API = "api"
-    LLM = "llm"
-    OCR = "ocr"
 
 
 @dataclass(frozen=True)
