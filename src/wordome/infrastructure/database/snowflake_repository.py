@@ -100,9 +100,9 @@ class SnowflakeRepository:
             result["review_scrapes_table_exists"] = await self._safe_table_exists(
                 ReviewScrapeRecord.__tablename__
             )
-            result["review_scrape_records_table_exists"] = (
-                await self._safe_table_exists(ReviewScrapeEntryRecord.__tablename__)
-            )
+            result[
+                "review_scrape_records_table_exists"
+            ] = await self._safe_table_exists(ReviewScrapeEntryRecord.__tablename__)
             result["can_bootstrap_schema"] = True
         elif result["database_visible"]:
             result["errors"].append(
