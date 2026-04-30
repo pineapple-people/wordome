@@ -124,7 +124,7 @@ The repo includes a matching [`.env.example`](/Users/pototo/codebase/wordome/.en
 Note: Provide actual credential values locally in `.env` file (avoid comitting this actual file)
 
 ### Snowflake SQL - Bootstrap
-Run this after first-time credential setup, or when the pre-migration snapshot table shape changes:
+Run this after first-time credential setup:
 
 ```bash
 > make bootstrap-snowflake
@@ -133,4 +133,4 @@ Run this after first-time credential setup, or when the pre-migration snapshot t
 This bootstrap flow is designed to be idempotent:
 - it creates the configured database and schema if missing
 - it creates the `review_scrapes` table if missing
-- it applies the current one-time legacy snapshot column alignment if needed
+- it creates the `review_scrape_records` current-state table if missing
