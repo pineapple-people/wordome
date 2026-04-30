@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import desc, select
 
@@ -30,6 +31,7 @@ class SnowflakeRepository:
     REVIEW_SCRAPES_TABLE = ReviewScrapeRecord.__tablename__
     SITEMAP_CRAWL_RUNS_TABLE = SitemapCrawlRunRecord.__tablename__
     SITEMAP_CRAWL_RECORDS_TABLE = SitemapCrawlRecord.__tablename__
+    NEW_YORK_TZ = ZoneInfo("America/New_York")
 
     def __init__(self, connection: SnowflakeConnection | None = None):
         self._connection = connection or SnowflakeConnection()
@@ -148,12 +150,34 @@ class SnowflakeRepository:
             record.skipped_sitemaps_count = len(result.skipped_sitemaps)
             record.discovered_url_count = len(result.pdp_urls)
             record.error_count = len(result.errors)
-            record.completed_at = datetime.utcnow()
+            record.completed_at = self._new_york_now_naive()
             record.status = (
                 SitemapCrawlRunStatus.COMPLETED_WITH_ERRORS.value
                 if result.errors
                 else SitemapCrawlRunStatus.COMPLETED.value
             )
+            session.flush()
+            return record.crawl_run_id
+
+        return await self._connection.run_session(_update)
+
+    async def fail_sitemap_crawl_run(
+        self,
+        *,
+        crawl_run_id: str,
+        result: SitemapPdpDiscoveryResult | None = None,
+    ) -> str:
+        def _update(session):
+            record = session.get(SitemapCrawlRunRecord, crawl_run_id)
+            if record is None:
+                raise RuntimeError(f"Missing sitemap crawl run: {crawl_run_id}")
+            if result is not None:
+                record.processed_sitemaps_count = len(result.processed_sitemaps)
+                record.skipped_sitemaps_count = len(result.skipped_sitemaps)
+                record.discovered_url_count = len(result.pdp_urls)
+                record.error_count = len(result.errors)
+            record.completed_at = self._new_york_now_naive()
+            record.status = SitemapCrawlRunStatus.FAILED.value
             session.flush()
             return record.crawl_run_id
 
@@ -166,7 +190,7 @@ class SnowflakeRepository:
         retailer_name: str,
         records: list[SitemapCrawlRecordObservation],
     ) -> dict[str, int]:
-        observed_at = datetime.utcnow()
+        observed_at = self._new_york_now_naive()
 
         def _upsert(session):
             inserted_count = 0
@@ -258,6 +282,9 @@ class SnowflakeRepository:
             }
 
         return await self._connection.run_session(_upsert)
+
+    def _new_york_now_naive(self) -> datetime:
+        return datetime.now(self.NEW_YORK_TZ).replace(tzinfo=None)
 
     async def get_latest_snapshot(self, product_url: str) -> ReviewScrapeResult | None:
         record = await self._connection.run_session(

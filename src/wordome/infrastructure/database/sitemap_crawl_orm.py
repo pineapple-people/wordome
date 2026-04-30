@@ -2,10 +2,14 @@ from datetime import datetime
 from enum import StrEnum
 from uuid import uuid4
 
-from sqlalchemy import DateTime, Integer, String, func
+from sqlalchemy import DateTime, Integer, String, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .review_scrape_orm import Base
+
+EST_TIMESTAMP_NTZ_SQL = (
+    "CAST(CONVERT_TIMEZONE('America/New_York', CURRENT_TIMESTAMP()) AS TIMESTAMP_NTZ)"
+)
 
 
 class SitemapCrawlRunStatus(StrEnum):
@@ -37,6 +41,7 @@ class SitemapCrawlSkipReason(StrEnum):
     PATTERN_MISMATCH = "pattern_mismatch"
     HOST_MISMATCH = "host_mismatch"
     DEPTH_LIMIT = "depth_limit"
+    MAX_SITEMAPS_LIMIT = "max_sitemaps_limit"
     ALREADY_SEEN = "already_seen"
     NON_TARGET_URL_TYPE = "non_target_url_type"
 
@@ -93,8 +98,7 @@ class SitemapCrawlRunRecord(Base):
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=False),
         nullable=False,
-        default=datetime.utcnow,
-        server_default=func.current_timestamp(),
+        server_default=text(EST_TIMESTAMP_NTZ_SQL),
     )
     completed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=False),
@@ -139,14 +143,12 @@ class SitemapCrawlRecord(Base):
     first_encountered_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=False),
         nullable=False,
-        default=datetime.utcnow,
-        server_default=func.current_timestamp(),
+        server_default=text(EST_TIMESTAMP_NTZ_SQL),
     )
     latest_encountered_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=False),
         nullable=False,
-        default=datetime.utcnow,
-        server_default=func.current_timestamp(),
+        server_default=text(EST_TIMESTAMP_NTZ_SQL),
     )
     times_seen: Mapped[int] = mapped_column(
         Integer,
@@ -174,7 +176,8 @@ class SitemapCrawlRecord(Base):
         nullable=True,
         comment=(
             "Expected values when record_status=skipped: pattern_mismatch, "
-            "host_mismatch, depth_limit, already_seen, non_target_url_type."
+            "host_mismatch, depth_limit, max_sitemaps_limit, already_seen, "
+            "non_target_url_type."
         ),
     )
     child_sitemap_count: Mapped[int | None] = mapped_column(

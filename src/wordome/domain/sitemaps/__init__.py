@@ -4,6 +4,7 @@ from .models import (
     SitemapCrawlRecordObservation,
     SitemapPdpDiscoveryResult,
     SitemapTraversalStats,
+    SupportedRetailer,
 )
 
 __all__ = [
@@ -12,4 +13,5 @@ __all__ = [
     "SitemapPdpDiscoverer",
     "SitemapPdpDiscoveryResult",
     "SitemapTraversalStats",
+    "SupportedRetailer",
 ]

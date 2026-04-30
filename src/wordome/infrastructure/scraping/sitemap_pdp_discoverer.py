@@ -49,6 +49,26 @@ class SitemapPdpDiscovererService:
         self._web_fetcher = web_fetcher or WebFetcher()
         self._profiles = profiles or SITEMAP_PROFILES
 
+    def resolve_entrypoint_url(
+        self,
+        sitemap_url: str | None = None,
+        *,
+        retailer_name: str | None = None,
+    ) -> str:
+        profile = self._resolve_profile(retailer_name)
+        effective_sitemap_url = sitemap_url or (
+            profile.entrypoint_url if profile else None
+        )
+        if not effective_sitemap_url:
+            raise ValueError("sitemap_url or retailer_name is required")
+        return effective_sitemap_url
+
+    def resolve_retailer_name(self, retailer_name: str | None = None) -> str | None:
+        profile = self._resolve_profile(retailer_name)
+        if profile is None:
+            return retailer_name
+        return profile.name.value
+
     async def discover_pdp_urls(
         self,
         sitemap_url: str | None = None,
@@ -61,11 +81,10 @@ class SitemapPdpDiscovererService:
         record_observer: Callable[[SitemapCrawlRecordObservation], None] | None = None,
     ) -> SitemapPdpDiscoveryResult:
         profile = self._resolve_profile(retailer_name)
-        effective_sitemap_url = sitemap_url or (
-            profile.entrypoint_url if profile else None
+        effective_sitemap_url = self.resolve_entrypoint_url(
+            sitemap_url,
+            retailer_name=retailer_name,
         )
-        if not effective_sitemap_url:
-            raise ValueError("sitemap_url or retailer_name is required")
 
         effective_max_depth = (
             max_depth
@@ -245,6 +264,30 @@ class SitemapPdpDiscovererService:
                         ),
                     )
 
+        if queue and len(processed_sitemaps) >= effective_max_sitemaps:
+            abandoned_sitemaps: set[str] = set()
+            while queue:
+                queued_sitemap_url, depth, parent_url = queue.popleft()
+                normalized_queued = self._normalize_url(queued_sitemap_url)
+                if (
+                    normalized_queued in visited_sitemaps
+                    or normalized_queued in abandoned_sitemaps
+                ):
+                    continue
+                abandoned_sitemaps.add(normalized_queued)
+                skipped_sitemaps.append(normalized_queued)
+                self._observe(
+                    record_observer,
+                    SitemapCrawlRecordObservation(
+                        record_url=normalized_queued,
+                        parent_url=parent_url,
+                        record_type="sitemap_document",
+                        depth=depth,
+                        record_status="skipped",
+                        skip_reason="max_sitemaps_limit",
+                    ),
+                )
+
         stats = SitemapTraversalStats(
             discovered_sitemaps=len(visited_sitemaps),
             processed_sitemaps=len(processed_sitemaps),
@@ -254,7 +297,7 @@ class SitemapPdpDiscovererService:
         )
         return SitemapPdpDiscoveryResult(
             entrypoint_url=effective_sitemap_url,
-            retailer_name=profile.name if profile else retailer_name,
+            retailer_name=profile.name.value if profile else retailer_name,
             pdp_urls=sorted(pdp_urls),
             processed_sitemaps=processed_sitemaps,
             skipped_sitemaps=sorted(set(skipped_sitemaps)),

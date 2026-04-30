@@ -1,9 +1,14 @@
 from dataclasses import dataclass, field
+from enum import StrEnum
+
+
+class SupportedRetailer(StrEnum):
+    IKEA_US = "ikea_us"
 
 
 @dataclass(frozen=True)
 class RetailerSitemapProfile:
-    name: str
+    name: SupportedRetailer
     entrypoint_url: str
     sitemap_include_patterns: list[str] = field(default_factory=list)
     sitemap_exclude_patterns: list[str] = field(default_factory=list)

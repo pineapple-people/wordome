@@ -5,6 +5,15 @@ from .models import SitemapCrawlRecordObservation, SitemapPdpDiscoveryResult
 
 
 class SitemapPdpDiscoverer(Protocol):
+    def resolve_retailer_name(self, retailer_name: str | None = None) -> str | None: ...
+
+    def resolve_entrypoint_url(
+        self,
+        sitemap_url: str | None = None,
+        *,
+        retailer_name: str | None = None,
+    ) -> str: ...
+
     async def discover_pdp_urls(
         self,
         sitemap_url: str | None = None,

@@ -1,3 +1,4 @@
+from contextlib import suppress
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -141,8 +142,39 @@ def _dedupe_crawl_record_observations(
 ) -> list[SitemapCrawlRecordObservation]:
     deduped: dict[tuple[str, str], SitemapCrawlRecordObservation] = {}
     for observation in observations:
-        deduped[(observation.record_type, observation.record_url)] = observation
+        key = (observation.record_type, observation.record_url)
+        existing = deduped.get(key)
+        if existing is None:
+            deduped[key] = observation
+            continue
+        # Preserve the strongest crawl outcome, and on ties keep the later
+        # observation so stateful fields like parent_url/depth stay current.
+        if _observation_priority(observation) >= _observation_priority(existing):
+            deduped[key] = observation
     return list(deduped.values())
+
+
+def _observation_priority(observation: SitemapCrawlRecordObservation) -> int:
+    """
+    Rank duplicate observations for the same (record_type, record_url).
+
+    Higher numbers represent stronger crawl outcomes:
+    - error: fetch/parse failures should override later weaker signals
+    - processed/discovered: successful sitemap or accepted leaf outcomes
+    - skipped: meaningful skips such as pattern/depth/limit filtering
+    - already_seen: weakest signal because it is only duplicate noise
+
+    When two observations have the same priority, the later one wins so
+    stateful fields like parent_url and depth reflect the most recently
+    observed crawl context within the run.
+    """
+    if observation.record_status == "error":
+        return 4
+    if observation.record_status in {"processed", "discovered"}:
+        return 3
+    if observation.skip_reason == "already_seen":
+        return 1
+    return 2
 
 
 async def _discover_pdp_links(
@@ -225,36 +257,53 @@ async def discover_pdp_links_dump_and_persist(
     persist crawl run bookkeeping records in Snowflake.
     """
     crawl_observations: list[SitemapCrawlRecordObservation] = []
-    result = await _discover_pdp_links(
-        request,
-        discoverer,
-        record_observer=crawl_observations.append,
-    )
-    output_path = (
-        Path(request.output_path)
-        if request.output_path
-        else _default_sitemap_dump_path(request)
-    )
-    output_path.write_text(
-        "\n".join(_build_sitemap_dump_lines(result)) + "\n",
-        encoding="utf-8",
-    )
-
-    retailer_name = result.retailer_name or request.retailer_name or "custom"
+    result = None
+    try:
+        entrypoint_url = discoverer.resolve_entrypoint_url(
+            request.sitemap_url,
+            retailer_name=request.retailer_name,
+        )
+        retailer_name = discoverer.resolve_retailer_name(request.retailer_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    retailer_name = retailer_name or "custom"
     crawl_run_id = await sf_repository.create_sitemap_crawl_run(
         retailer_name=retailer_name,
-        entrypoint_url=result.entrypoint_url,
+        entrypoint_url=entrypoint_url,
     )
-    deduped_observations = _dedupe_crawl_record_observations(crawl_observations)
-    record_write_counts = await sf_repository.upsert_sitemap_crawl_records(
-        crawl_run_id=crawl_run_id,
-        retailer_name=retailer_name,
-        records=deduped_observations,
-    )
-    await sf_repository.finalize_sitemap_crawl_run(
-        crawl_run_id=crawl_run_id,
-        result=result,
-    )
+    try:
+        result = await _discover_pdp_links(
+            request,
+            discoverer,
+            record_observer=crawl_observations.append,
+        )
+        output_path = (
+            Path(request.output_path)
+            if request.output_path
+            else _default_sitemap_dump_path(request)
+        )
+        output_path.write_text(
+            "\n".join(_build_sitemap_dump_lines(result)) + "\n",
+            encoding="utf-8",
+        )
+
+        deduped_observations = _dedupe_crawl_record_observations(crawl_observations)
+        record_write_counts = await sf_repository.upsert_sitemap_crawl_records(
+            crawl_run_id=crawl_run_id,
+            retailer_name=retailer_name,
+            records=deduped_observations,
+        )
+        await sf_repository.finalize_sitemap_crawl_run(
+            crawl_run_id=crawl_run_id,
+            result=result,
+        )
+    except Exception:
+        with suppress(Exception):
+            await sf_repository.fail_sitemap_crawl_run(
+                crawl_run_id=crawl_run_id,
+                result=result,
+            )
+        raise
 
     return {
         "success": True,
