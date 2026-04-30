@@ -1,7 +1,11 @@
 from sqlalchemy import create_engine
 
 from wordome.app import create_app
-from wordome.infrastructure.database.review_scrape_orm import Base, ReviewScrapeRecord
+from wordome.infrastructure.database.review_scrape_orm import (
+    Base,
+    ReviewScrapeEntryRecord,
+    ReviewScrapeRecord,
+)
 from wordome.infrastructure.database.sitemap_crawl_orm import (
     SitemapCrawlRecord,
     SitemapCrawlRunRecord,
@@ -12,6 +16,7 @@ from wordome.infrastructure.database.snowflake_connection import SnowflakeConnec
 def main() -> None:
     expected_tables = {
         ReviewScrapeRecord.__tablename__,
+        ReviewScrapeEntryRecord.__tablename__,
         SitemapCrawlRunRecord.__tablename__,
         SitemapCrawlRecord.__tablename__,
     }

@@ -2,7 +2,10 @@ import asyncio
 
 from sqlalchemy import text
 
-from wordome.infrastructure.database.review_scrape_orm import ReviewScrapeRecord
+from wordome.infrastructure.database.review_scrape_orm import (
+    ReviewScrapeEntryRecord,
+    ReviewScrapeRecord,
+)
 from wordome.infrastructure.database.sitemap_crawl_orm import (
     SitemapCrawlRecord,
     SitemapCrawlRunRecord,
@@ -16,22 +19,12 @@ def _quote_identifier(identifier: str) -> str:
     return f'"{escaped}"'
 
 
-def _is_safe_rename_noop(exc: Exception) -> bool:
-    message = str(exc).lower()
-    return (
-        "does not exist" in message
-        or "invalid identifier" in message
-        or "already exists" in message
-    )
-
-
 async def bootstrap_snowflake() -> dict[str, object]:
     config = get_snowflake_profile()
     connection = SnowflakeConnection()
 
     quoted_database = _quote_identifier(config.database)
     quoted_schema = _quote_identifier(config.schema_name)
-    table_name = f"{quoted_database}.{quoted_schema}.{ReviewScrapeRecord.__tablename__}"
 
     await connection.run_session(
         lambda session: session.execute(
@@ -45,35 +38,6 @@ async def bootstrap_snowflake() -> dict[str, object]:
     )
     await connection.create_all()
 
-    try:
-        await connection.run_session(
-            lambda session: session.execute(
-                text(
-                    f"""
-                    ALTER TABLE {table_name}
-                    RENAME COLUMN snapshot_id TO snapshot_event_id
-                    """
-                )
-            )
-        )
-    except Exception as exc:
-        if not _is_safe_rename_noop(exc):
-            raise RuntimeError(
-                "Failed to rename legacy column 'snapshot_id' to "
-                f"'snapshot_event_id' on {table_name}. Original error: {exc}"
-            ) from exc
-
-    await connection.run_session(
-        lambda session: session.execute(
-            text(
-                f"""
-                ALTER TABLE {table_name}
-                ADD COLUMN IF NOT EXISTS snapshot_hash STRING
-                """
-            )
-        )
-    )
-
     return {
         "success": True,
         "database": config.database,
@@ -81,6 +45,7 @@ async def bootstrap_snowflake() -> dict[str, object]:
         "review_scrapes_table": ReviewScrapeRecord.__tablename__,
         "sitemap_crawl_runs_table": SitemapCrawlRunRecord.__tablename__,
         "sitemap_crawl_records_table": SitemapCrawlRecord.__tablename__,
+        "review_scrape_records_table": ReviewScrapeEntryRecord.__tablename__,
     }
 
 

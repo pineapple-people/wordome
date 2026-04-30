@@ -10,7 +10,10 @@ from wordome.domain.sitemaps import (
     SitemapCrawlRecordObservation,
     SitemapPdpDiscoveryResult,
 )
-from wordome.infrastructure.database.review_scrape_orm import ReviewScrapeRecord
+from wordome.infrastructure.database.review_scrape_orm import (
+    ReviewScrapeEntryRecord,
+    ReviewScrapeRecord,
+)
 from wordome.infrastructure.database.review_scrape_result_codec import (
     ReviewScrapeResultCodec,
 )
@@ -31,6 +34,7 @@ class SnowflakeRepository:
     REVIEW_SCRAPES_TABLE = ReviewScrapeRecord.__tablename__
     SITEMAP_CRAWL_RUNS_TABLE = SitemapCrawlRunRecord.__tablename__
     SITEMAP_CRAWL_RECORDS_TABLE = SitemapCrawlRecord.__tablename__
+    REVIEW_SCRAPE_RECORDS_TABLE = ReviewScrapeEntryRecord.__tablename__
     NEW_YORK_TZ = ZoneInfo("America/New_York")
 
     def __init__(self, connection: SnowflakeConnection | None = None):
@@ -51,10 +55,12 @@ class SnowflakeRepository:
             "review_scrapes_table": self.REVIEW_SCRAPES_TABLE,
             "sitemap_crawl_runs_table": self.SITEMAP_CRAWL_RUNS_TABLE,
             "sitemap_crawl_records_table": self.SITEMAP_CRAWL_RECORDS_TABLE,
+            "review_scrape_records_table": self.REVIEW_SCRAPE_RECORDS_TABLE,
             "current_context": None,
             "database_visible": None,
             "schema_visible": None,
             "review_scrapes_table_exists": None,
+            "review_scrape_records_table_exists": None,
             "can_bootstrap_schema": None,
             "accessible_databases": [],
             "accessible_schemas_in_configured_database": [],
@@ -72,9 +78,15 @@ class SnowflakeRepository:
             result["errors"].append(f"Unable to fetch current Snowflake context: {exc}")
 
         if self._config is None:
-            table_exists = await self._safe_table_exists()
-            result["review_scrapes_table_exists"] = table_exists
-            result["can_bootstrap_schema"] = table_exists
+            history_table_exists = await self._safe_table_exists(
+                ReviewScrapeRecord.__tablename__
+            )
+            state_table_exists = await self._safe_table_exists(
+                ReviewScrapeEntryRecord.__tablename__
+            )
+            result["review_scrapes_table_exists"] = history_table_exists
+            result["review_scrape_records_table_exists"] = state_table_exists
+            result["can_bootstrap_schema"] = history_table_exists and state_table_exists
             result["grants_to_current_role"] = await self._safe_grants_to_current_role()
             return result
 
@@ -100,8 +112,12 @@ class SnowflakeRepository:
                 self._config.database,
                 self._config.schema_name,
             )
-            table_exists = await self._safe_table_exists()
-            result["review_scrapes_table_exists"] = table_exists
+            result["review_scrapes_table_exists"] = await self._safe_table_exists(
+                ReviewScrapeRecord.__tablename__
+            )
+            result[
+                "review_scrape_records_table_exists"
+            ] = await self._safe_table_exists(ReviewScrapeEntryRecord.__tablename__)
             result["can_bootstrap_schema"] = True
         elif result["database_visible"]:
             result["errors"].append(
@@ -316,9 +332,9 @@ class SnowflakeRepository:
         )
         return [ReviewScrapeResultCodec.from_record(record) for record in records]
 
-    async def _safe_table_exists(self) -> bool | None:
+    async def _safe_table_exists(self, table_name: str) -> bool | None:
         try:
-            return await self._connection.has_table(ReviewScrapeRecord.__tablename__)
+            return await self._connection.has_table(table_name)
         except Exception:
             return None
 
