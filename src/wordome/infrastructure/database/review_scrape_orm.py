@@ -2,7 +2,7 @@ from datetime import datetime
 from uuid import uuid4
 
 from snowflake.sqlalchemy import VARIANT
-from sqlalchemy import DateTime, Integer, String, func
+from sqlalchemy import DateTime, Integer, String, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.types import JSON
 
@@ -44,6 +44,8 @@ class ReviewScrapeRecord(Base):
     scraped_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=False),
         nullable=False,
-        default=datetime.utcnow,
-        server_default=func.current_timestamp(),
+        server_default=text(
+            "CAST(CONVERT_TIMEZONE('America/New_York', CURRENT_TIMESTAMP()) "
+            "AS TIMESTAMP_NTZ)"
+        ),
     )
