@@ -3,7 +3,7 @@ from typing import Any
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import desc, select
+from sqlalchemy import desc, exists, select
 
 from wordome.domain.reviews.models import ReviewScrapeResult
 from wordome.domain.sitemaps import (
@@ -13,14 +13,18 @@ from wordome.domain.sitemaps import (
 from wordome.infrastructure.database.review_scrape_orm import (
     ReviewScrapeEntryRecord,
     ReviewScrapeRecord,
+    ReviewScrapeRunRecord,
 )
 from wordome.infrastructure.database.review_scrape_result_codec import (
     ReviewScrapeResultCodec,
 )
 from wordome.infrastructure.database.sitemap_crawl_orm import (
     SitemapCrawlRecord,
+    SitemapCrawlRecordStatus,
+    SitemapCrawlRecordType,
     SitemapCrawlRunRecord,
     SitemapCrawlRunStatus,
+    SitemapCrawlUrlType,
 )
 from wordome.infrastructure.database.snowflake_config import get_snowflake_profile
 from wordome.infrastructure.database.snowflake_connection import SnowflakeConnection
@@ -32,6 +36,7 @@ class SnowflakeRepository:
     """
 
     REVIEW_SCRAPES_TABLE = ReviewScrapeRecord.__tablename__
+    REVIEW_SCRAPE_PIPELINE_RUNS_TABLE = ReviewScrapeRunRecord.__tablename__
     SITEMAP_CRAWL_RUNS_TABLE = SitemapCrawlRunRecord.__tablename__
     SITEMAP_CRAWL_RECORDS_TABLE = SitemapCrawlRecord.__tablename__
     REVIEW_SCRAPE_RECORDS_TABLE = ReviewScrapeEntryRecord.__tablename__
@@ -53,6 +58,7 @@ class SnowflakeRepository:
             "configured_database": self._config.database if self._config else None,
             "configured_schema": self._config.schema_name if self._config else None,
             "review_scrapes_table": self.REVIEW_SCRAPES_TABLE,
+            "review_scrape_pipeline_runs_table": self.REVIEW_SCRAPE_PIPELINE_RUNS_TABLE,
             "sitemap_crawl_runs_table": self.SITEMAP_CRAWL_RUNS_TABLE,
             "sitemap_crawl_records_table": self.SITEMAP_CRAWL_RECORDS_TABLE,
             "review_scrape_records_table": self.REVIEW_SCRAPE_RECORDS_TABLE,
@@ -60,6 +66,7 @@ class SnowflakeRepository:
             "database_visible": None,
             "schema_visible": None,
             "review_scrapes_table_exists": None,
+            "review_scrape_pipeline_runs_table_exists": None,
             "review_scrape_records_table_exists": None,
             "can_bootstrap_schema": None,
             "accessible_databases": [],
@@ -81,12 +88,18 @@ class SnowflakeRepository:
             history_table_exists = await self._safe_table_exists(
                 ReviewScrapeRecord.__tablename__
             )
+            run_table_exists = await self._safe_table_exists(
+                ReviewScrapeRunRecord.__tablename__
+            )
             state_table_exists = await self._safe_table_exists(
                 ReviewScrapeEntryRecord.__tablename__
             )
             result["review_scrapes_table_exists"] = history_table_exists
+            result["review_scrape_pipeline_runs_table_exists"] = run_table_exists
             result["review_scrape_records_table_exists"] = state_table_exists
-            result["can_bootstrap_schema"] = history_table_exists and state_table_exists
+            result["can_bootstrap_schema"] = (
+                history_table_exists and run_table_exists and state_table_exists
+            )
             result["grants_to_current_role"] = await self._safe_grants_to_current_role()
             return result
 
@@ -112,13 +125,21 @@ class SnowflakeRepository:
                 self._config.database,
                 self._config.schema_name,
             )
-            result["review_scrapes_table_exists"] = await self._safe_table_exists(
+            history_table_exists = await self._safe_table_exists(
                 ReviewScrapeRecord.__tablename__
             )
-            result[
-                "review_scrape_records_table_exists"
-            ] = await self._safe_table_exists(ReviewScrapeEntryRecord.__tablename__)
-            result["can_bootstrap_schema"] = True
+            run_table_exists = await self._safe_table_exists(
+                ReviewScrapeRunRecord.__tablename__
+            )
+            state_table_exists = await self._safe_table_exists(
+                ReviewScrapeEntryRecord.__tablename__
+            )
+            result["review_scrapes_table_exists"] = history_table_exists
+            result["review_scrape_pipeline_runs_table_exists"] = run_table_exists
+            result["review_scrape_records_table_exists"] = state_table_exists
+            result["can_bootstrap_schema"] = (
+                history_table_exists and run_table_exists and state_table_exists
+            )
         elif result["database_visible"]:
             result["errors"].append(
                 f"Configured schema '{self._config.schema_name}' is not visible in database "
@@ -331,6 +352,43 @@ class SnowflakeRepository:
             )
         )
         return [ReviewScrapeResultCodec.from_record(record) for record in records]
+
+    async def list_pdp_urls_for_review_scrape(
+        self,
+        *,
+        retailer_name: str,
+        limit: int = 10,
+        only_unscraped: bool = True,
+    ) -> list[str]:
+        def _select_urls(session):
+            statement = (
+                select(SitemapCrawlRecord.record_url)
+                .where(
+                    SitemapCrawlRecord.retailer_name == retailer_name,
+                    SitemapCrawlRecord.record_type
+                    == SitemapCrawlRecordType.DISCOVERED_URL.value,
+                    SitemapCrawlRecord.url_type == SitemapCrawlUrlType.PDP.value,
+                    SitemapCrawlRecord.record_status
+                    == SitemapCrawlRecordStatus.DISCOVERED.value,
+                )
+                .order_by(
+                    SitemapCrawlRecord.first_encountered_at.asc(),
+                    SitemapCrawlRecord.record_url.asc(),
+                )
+                .limit(limit)
+            )
+            if only_unscraped:
+                statement = statement.where(
+                    ~exists(
+                        select(1).where(
+                            ReviewScrapeRecord.product_url
+                            == SitemapCrawlRecord.record_url
+                        )
+                    )
+                )
+            return list(session.execute(statement).scalars().all())
+
+        return await self._connection.run_session(_select_urls)
 
     async def _safe_table_exists(self, table_name: str) -> bool | None:
         try:

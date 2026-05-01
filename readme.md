@@ -82,37 +82,53 @@ Examples:
 > wordome --help
 ```
 
-### Sitemap PDP Discovery POC
-The sandbox API now includes a sitemap discovery endpoint that traverses a
-public sitemap entrypoint and returns candidate PDP links.
+### API Usage
+Run the API locally:
 
-Example request body:
-```json
-{
-  "retailer_name": "ikea"
-}
-```
-
-Ad hoc request body:
-```json
-{
-  "sitemap_url": "https://www.example.com/sitemap.xml",
-  "include_patterns": ["/product/", "/p/"],
-  "exclude_patterns": ["/blog/", "/category/"],
-  "max_depth": 3,
-  "max_sitemaps": 50
-}
-```
-
-Route:
 ```bash
-POST /sandbox/discover/pdp-links
+> wordome
 ```
 
-Dump-to-file route:
-```bash
-POST /sandbox/discover/pdp-links/dump
+Then use the built-in API docs as the source of truth for request and response
+schemas:
+
+```text
+Swagger UI: http://127.0.0.1:8000/docs
+ReDoc:      http://127.0.0.1:8000/redoc
 ```
+
+The interactive docs are generated from the FastAPI route and model
+definitions, so they stay current as the code evolves.
+
+### Happy Path Example
+Standard crawl-to-review flow:
+
+```bash
+# 1. Start the API
+> wordome
+
+# 2. Trigger a sitemap crawl using the retailer's default configured sitemap
+> curl -X POST http://127.0.0.1:8000/sitemap-crawls \
+    -H "Content-Type: application/json" \
+    -d '{"retailer_name":"ikea"}'
+
+# 3. Trigger review scraping from the crawl-derived PDP URLs
+> curl -X POST http://127.0.0.1:8000/review-scrapes/crawl \
+    -H "Content-Type: application/json" \
+    -d '{"retailer_name":"ikea","limit":10,"only_unscraped":true}'
+```
+
+Optional ad-hoc single PDP processing:
+
+```bash
+> curl -X POST http://127.0.0.1:8000/review-scrapes/single \
+    -H "Content-Type: application/json" \
+    -d '{"retailer_name":"ikea","product_url":"https://www.ikea.com/us/en/p/slattum-upholstered-bed-frame-vissle-dark-gray-40571253/","persist_result":true}'
+```
+
+Sandbox routes remain available for POC and debugging workflows under
+`/sandbox/...`, but the generated Swagger docs should be the primary reference
+for the public API surface.
 
 ## Utility
 
@@ -171,6 +187,7 @@ Run this after first-time credential setup:
 
 This bootstrap flow is designed to be idempotent:
 - it creates the configured database and schema if missing
+- it creates the `review_scrape_pipeline_runs` table if missing
 - it creates the `review_scrapes` table if missing
 - it creates the `review_scrape_records` current-state table if missing
 - it creates the `sitemap_crawl_runs` table if missing

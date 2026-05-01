@@ -46,6 +46,7 @@ async def sandbox_root():
             "/discover/pdp-links",
             "/discover/pdp-links/dump",
             "/db/discover/pdp-links/dump",
+            "/db/discover/pdp-links/scrape-reviews",
             "/reviews/ikea",
             "/db/ping",
             "/db/health",
@@ -85,6 +86,12 @@ class SitemapDiscoveryDumpRequest(SitemapDiscoveryRequest):
     output_path: str | None = None
 
 
+class SitemapReviewScrapeRequest(BaseModel):
+    retailer_name: str
+    limit: int = 10
+    only_unscraped: bool = True
+
+
 def _get_ikea_scraper(request: Request) -> ReviewsScraper:
     scraper = getattr(request.app.state, "ikea_scraper", None)
     if not isinstance(scraper, ReviewsScraperIkea):
@@ -97,6 +104,19 @@ def _get_sitemap_pdp_discoverer(request: Request) -> SitemapPdpDiscoverer:
     if not isinstance(discoverer, SitemapPdpDiscovererService):
         raise RuntimeError("Sitemap PDP discoverer is not configured on app.state")
     return discoverer
+
+
+def _resolve_reviews_scraper_for_retailer(
+    retailer_name: str,
+    request: Request,
+) -> ReviewsScraper:
+    normalized_name = retailer_name.strip().lower()
+    if normalized_name in {"ikea", "ikea_us"}:
+        return _get_ikea_scraper(request)
+    raise HTTPException(
+        status_code=400,
+        detail=f"No reviews scraper is configured for retailer `{retailer_name}`.",
+    )
 
 
 async def _scrape_ikea_reviews(
@@ -316,6 +336,77 @@ async def discover_pdp_links_dump_and_persist(
         "processed_sitemaps_count": len(result.processed_sitemaps),
         "skipped_sitemaps_count": len(result.skipped_sitemaps),
         "errors_count": len(result.errors),
+    }
+
+
+@router.post("/db/discover/pdp-links/scrape-reviews")
+async def scrape_reviews_from_discovered_pdp_links(
+    request: SitemapReviewScrapeRequest,
+    http_request: Request,
+    discoverer: SitemapPdpDiscoverer = Depends(_get_sitemap_pdp_discoverer),
+    sf_repository: SnowflakeRepository = Depends(_get_repository),
+):
+    """
+    Pull retailer PDP URLs from persisted sitemap crawl records, run the review
+    scraper for each selected URL, and persist resulting review snapshots.
+    """
+    try:
+        retailer_name = (
+            discoverer.resolve_retailer_name(request.retailer_name)
+            or request.retailer_name
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    scraper = _resolve_reviews_scraper_for_retailer(retailer_name, http_request)
+    pdp_urls = await sf_repository.list_pdp_urls_for_review_scrape(
+        retailer_name=retailer_name,
+        limit=request.limit,
+        only_unscraped=request.only_unscraped,
+    )
+
+    results: list[dict[str, str | int | bool | None]] = []
+    success_count = 0
+    failure_count = 0
+
+    for pdp_url in pdp_urls:
+        try:
+            scrape_result, snapshot_event_id = await _scrape_and_append_ikea_reviews(
+                pdp_url,
+                scraper,
+                sf_repository,
+            )
+        except Exception as exc:
+            failure_count += 1
+            results.append(
+                {
+                    "product_url": pdp_url,
+                    "success": False,
+                    "error": str(exc),
+                }
+            )
+            continue
+
+        success_count += 1
+        results.append(
+            {
+                "product_url": pdp_url,
+                "success": True,
+                "snapshot_event_id": snapshot_event_id,
+                "reviews_count": scrape_result.reviews_count,
+                "review_page_url": scrape_result.review_page_url,
+            }
+        )
+
+    return {
+        "success": failure_count == 0,
+        "retailer_name": retailer_name,
+        "selected_pdp_url_count": len(pdp_urls),
+        "processed_pdp_url_count": len(results),
+        "success_count": success_count,
+        "failure_count": failure_count,
+        "only_unscraped": request.only_unscraped,
+        "results": results,
     }
 
 

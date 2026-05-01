@@ -1,4 +1,5 @@
 from datetime import datetime
+from enum import StrEnum
 from uuid import uuid4
 
 from snowflake.sqlalchemy import VARIANT
@@ -13,7 +14,86 @@ class Base(DeclarativeBase):
     pass
 
 
+class ReviewScrapeRunStatus(StrEnum):
+    RUNNING = "running"
+    COMPLETED = "completed"
+    COMPLETED_WITH_ERRORS = "completed_with_errors"
+    FAILED = "failed"
+
+
+class ReviewScrapeRunTriggerType(StrEnum):
+    CRAWL = "crawl"
+    SINGLE = "single"
+
+
+class ReviewScrapeRunRecord(Base):
+    # TODO: Consider renaming table to `review_scrape_runs` in a future schema
+    # cleanup pass once downstream usage is ready for the migration.
+    __tablename__ = "review_scrape_pipeline_runs"
+
+    review_scrape_run_id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+        default=lambda: str(uuid4()),
+        comment="Unique identifier for one review scrape pipeline execution.",
+    )
+    retailer_name: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+        comment="Retailer/profile key used for the review scrape run.",
+    )
+    trigger_type: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        comment="Expected values: crawl, single.",
+    )
+    source_crawl_run_id: Mapped[str | None] = mapped_column(
+        String(36),
+        nullable=True,
+        comment="Optional sitemap crawl run that sourced PDP URLs for this run.",
+    )
+    status: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default=ReviewScrapeRunStatus.RUNNING.value,
+        comment=("Expected values: running, completed, completed_with_errors, failed."),
+    )
+    selected_url_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        comment="Number of PDP URLs selected for processing in this run.",
+    )
+    success_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        comment="Number of PDP URLs successfully scraped in this run.",
+    )
+    failure_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        comment="Number of PDP URLs that failed during this run.",
+    )
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=False),
+        nullable=False,
+        server_default=text(
+            "CAST(CONVERT_TIMEZONE('America/New_York', CURRENT_TIMESTAMP()) "
+            "AS TIMESTAMP_NTZ)"
+        ),
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=False),
+        nullable=True,
+        comment="Set when the review scrape run reaches a terminal status.",
+    )
+
+
 class ReviewScrapeRecord(Base):
+    # TODO: Consider renaming table to `review_scrape_snapshots` in a future
+    # schema cleanup pass once downstream usage is ready for the migration.
     __tablename__ = "review_scrapes"
 
     snapshot_event_id: Mapped[str] = mapped_column(
@@ -52,6 +132,8 @@ class ReviewScrapeRecord(Base):
 
 
 class ReviewScrapeEntryRecord(Base):
+    # TODO: Consider renaming table to `review_entry_records` in a future
+    # schema cleanup pass once downstream usage is ready for the migration.
     __tablename__ = "review_scrape_records"
 
     review_entry_id: Mapped[str] = mapped_column(String(64), primary_key=True)

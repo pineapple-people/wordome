@@ -108,6 +108,8 @@ class SitemapCrawlRunRecord(Base):
 
 
 class SitemapCrawlRecord(Base):
+    # TODO: Consider renaming table to `sitemap_entry_records` in a future
+    # schema cleanup pass once downstream usage is ready for the migration.
     __tablename__ = "sitemap_crawl_records"
 
     retailer_name: Mapped[str] = mapped_column(

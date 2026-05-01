@@ -5,6 +5,7 @@ from sqlalchemy import text
 from wordome.infrastructure.database.review_scrape_orm import (
     ReviewScrapeEntryRecord,
     ReviewScrapeRecord,
+    ReviewScrapeRunRecord,
 )
 from wordome.infrastructure.database.sitemap_crawl_orm import (
     SitemapCrawlRecord,
@@ -43,6 +44,7 @@ async def bootstrap_snowflake() -> dict[str, object]:
         "database": config.database,
         "schema": config.schema_name,
         "review_scrapes_table": ReviewScrapeRecord.__tablename__,
+        "review_scrape_pipeline_runs_table": ReviewScrapeRunRecord.__tablename__,
         "sitemap_crawl_runs_table": SitemapCrawlRunRecord.__tablename__,
         "sitemap_crawl_records_table": SitemapCrawlRecord.__tablename__,
         "review_scrape_records_table": ReviewScrapeEntryRecord.__tablename__,

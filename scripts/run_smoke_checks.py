@@ -5,6 +5,7 @@ from wordome.infrastructure.database.review_scrape_orm import (
     Base,
     ReviewScrapeEntryRecord,
     ReviewScrapeRecord,
+    ReviewScrapeRunRecord,
 )
 from wordome.infrastructure.database.sitemap_crawl_orm import (
     SitemapCrawlRecord,
@@ -17,6 +18,7 @@ def main() -> None:
     expected_tables = {
         ReviewScrapeRecord.__tablename__,
         ReviewScrapeEntryRecord.__tablename__,
+        ReviewScrapeRunRecord.__tablename__,
         SitemapCrawlRunRecord.__tablename__,
         SitemapCrawlRecord.__tablename__,
     }
