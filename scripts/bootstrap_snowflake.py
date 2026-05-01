@@ -1,4 +1,5 @@
 import asyncio
+import json
 
 from sqlalchemy import text
 
@@ -53,7 +54,7 @@ async def bootstrap_snowflake() -> dict[str, object]:
 
 def main() -> None:
     result = asyncio.run(bootstrap_snowflake())
-    print(result)
+    print(json.dumps(result, indent=2, sort_keys=True))
 
 
 if __name__ == "__main__":
