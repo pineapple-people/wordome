@@ -15,6 +15,7 @@ from wordome.infrastructure import (
     SitemapPdpDiscovererService,
     WebFetcher,
 )
+from wordome.infrastructure.database.review_scrape_orm import ReviewScrapeRunTriggerType
 from wordome.infrastructure.database.snowflake_repository import SnowflakeRepository
 
 router = APIRouter(prefix="/sandbox", tags=["sandbox"])
@@ -89,7 +90,6 @@ class SitemapDiscoveryDumpRequest(SitemapDiscoveryRequest):
 class SitemapReviewScrapeRequest(BaseModel):
     retailer_name: str
     limit: int = 10
-    only_unscraped: bool = True
 
 
 def _get_ikea_scraper(request: Request) -> ReviewsScraper:
@@ -313,6 +313,10 @@ async def discover_pdp_links_dump_and_persist(
             retailer_name=retailer_name,
             records=deduped_observations,
         )
+        queue_write_counts = await sf_repository.enqueue_review_scrape_urls(
+            retailer_name=retailer_name,
+            product_urls=result.pdp_urls,
+        )
         await sf_repository.finalize_sitemap_crawl_run(
             crawl_run_id=crawl_run_id,
             result=result,
@@ -329,6 +333,7 @@ async def discover_pdp_links_dump_and_persist(
         "success": True,
         "crawl_run_id": crawl_run_id,
         **record_write_counts,
+        **queue_write_counts,
         "output_path": str(output_path),
         "retailer_name": result.retailer_name,
         "entrypoint_url": result.entrypoint_url,
@@ -347,8 +352,8 @@ async def scrape_reviews_from_discovered_pdp_links(
     sf_repository: SnowflakeRepository = Depends(_get_repository),
 ):
     """
-    Pull retailer PDP URLs from persisted sitemap crawl records, run the review
-    scraper for each selected URL, and persist resulting review snapshots.
+    Pull retailer PDP URLs from the review scrape queue, run the review scraper
+    for each selected URL, and persist resulting review snapshots.
     """
     try:
         retailer_name = (
@@ -359,53 +364,85 @@ async def scrape_reviews_from_discovered_pdp_links(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     scraper = _resolve_reviews_scraper_for_retailer(retailer_name, http_request)
-    pdp_urls = await sf_repository.list_pdp_urls_for_review_scrape(
+    review_scrape_run_id = await sf_repository.create_review_scrape_run(
+        retailer_name=retailer_name,
+        trigger_type=ReviewScrapeRunTriggerType.CRAWL.value,
+    )
+    pdp_urls = await sf_repository.claim_review_scrape_queue_urls(
         retailer_name=retailer_name,
         limit=request.limit,
-        only_unscraped=request.only_unscraped,
+        review_scrape_run_id=review_scrape_run_id,
+    )
+    await sf_repository.update_review_scrape_run_selected_count(
+        review_scrape_run_id=review_scrape_run_id,
+        selected_url_count=len(pdp_urls),
     )
 
     results: list[dict[str, str | int | bool | None]] = []
     success_count = 0
     failure_count = 0
 
-    for pdp_url in pdp_urls:
-        try:
-            scrape_result, snapshot_event_id = await _scrape_and_append_ikea_reviews(
-                pdp_url,
-                scraper,
-                sf_repository,
-            )
-        except Exception as exc:
-            failure_count += 1
-            results.append(
-                {
-                    "product_url": pdp_url,
-                    "success": False,
-                    "error": str(exc),
-                }
-            )
-            continue
-
-        success_count += 1
-        results.append(
-            {
-                "product_url": pdp_url,
-                "success": True,
-                "snapshot_event_id": snapshot_event_id,
-                "reviews_count": scrape_result.reviews_count,
-                "review_page_url": scrape_result.review_page_url,
-            }
+    try:
+        for pdp_url in pdp_urls:
+            try:
+                (
+                    scrape_result,
+                    snapshot_event_id,
+                ) = await _scrape_and_append_ikea_reviews(
+                    pdp_url,
+                    scraper,
+                    sf_repository,
+                )
+                await sf_repository.mark_review_scrape_queue_completed(
+                    retailer_name=retailer_name,
+                    product_url=pdp_url,
+                )
+                success_count += 1
+                results.append(
+                    {
+                        "product_url": pdp_url,
+                        "success": True,
+                        "snapshot_event_id": snapshot_event_id,
+                        "reviews_count": scrape_result.reviews_count,
+                        "review_page_url": scrape_result.review_page_url,
+                    }
+                )
+            except Exception as exc:
+                failure_count += 1
+                await sf_repository.record_review_scrape_queue_failure(
+                    retailer_name=retailer_name,
+                    product_url=pdp_url,
+                    latest_error_message=str(exc),
+                )
+                results.append(
+                    {
+                        "product_url": pdp_url,
+                        "success": False,
+                        "error": str(exc),
+                    }
+                )
+                continue
+        await sf_repository.finalize_review_scrape_run(
+            review_scrape_run_id=review_scrape_run_id,
+            success_count=success_count,
+            failure_count=failure_count,
         )
+    except Exception:
+        await sf_repository.fail_review_scrape_run(
+            review_scrape_run_id=review_scrape_run_id,
+            success_count=success_count,
+            failure_count=failure_count,
+        )
+        raise
 
     return {
         "success": failure_count == 0,
+        "review_scrape_run_id": review_scrape_run_id,
         "retailer_name": retailer_name,
         "selected_pdp_url_count": len(pdp_urls),
         "processed_pdp_url_count": len(results),
         "success_count": success_count,
         "failure_count": failure_count,
-        "only_unscraped": request.only_unscraped,
         "results": results,
     }
 

@@ -112,10 +112,15 @@ Standard crawl-to-review flow:
     -H "Content-Type: application/json" \
     -d '{"retailer_name":"ikea"}'
 
-# 3. Trigger review scraping from the crawl-derived PDP URLs
+# 2a. The kickoff returns 202 Accepted with a crawl_run_id and running status
+# 2b. Retrieve sitemap crawl status by crawl_run_id while the background task runs
+> curl http://127.0.0.1:8000/sitemap-crawls/<crawl_run_id>
+
+# 2c. Wait until the crawl status reaches `completed` or `completed_with_errors`
+# 3. Then trigger review scraping from the crawl-derived PDP URLs
 > curl -X POST http://127.0.0.1:8000/review-scrapes/crawl \
     -H "Content-Type: application/json" \
-    -d '{"retailer_name":"ikea","limit":10,"only_unscraped":true}'
+    -d '{"retailer_name":"ikea","limit":10}'
 ```
 
 Optional ad-hoc single PDP processing:
@@ -129,6 +134,36 @@ Optional ad-hoc single PDP processing:
 Sandbox routes remain available for POC and debugging workflows under
 `/sandbox/...`, but the generated Swagger docs should be the primary reference
 for the public API surface.
+
+### Pipeline Data Model
+`Grain` means what a single row in the table represents.
+
+#### Sitemap Crawl Stage
+
+| Table | Grain | Purpose |
+|---|---|---|
+| `sitemap_crawl_runs` | 1 row per sitemap crawl execution | Track sitemap crawl job lifecycle, counts, and status |
+| `sitemap_crawl_records` | 1 row per retailer + observed/discovered URL | Persist crawl-discovered URL state and classification |
+
+#### Review Scrape Handoff
+
+| Table | Grain | Purpose |
+|---|---|---|
+| `review_scrape_queue` | 1 row per retailer + PDP URL in the sitemap-to-review handoff layer | Queue-state layer between sitemap discovery and review scraping |
+
+Lifecycle:
+- inserted by the sitemap crawl stage when a PDP URL becomes eligible for review scraping
+- moved to `claimed` while a review scrape run is actively processing it
+- returned to `unclaimed` on failure/retry with the latest run/error context preserved
+- moved to `completed` on successful review scrape for later cleanup/reconciliation
+
+#### Review Scrape Stage
+
+| Table | Grain | Purpose |
+|---|---|---|
+| `review_scrape_pipeline_runs` | 1 row per review scrape execution | Track review scrape job lifecycle, counts, and trigger type |
+| `review_scrapes` | 1 row per PDP scrape snapshot/event | Historical record of raw review scrape output |
+| `review_scrape_records` | 1 row per deduped review entry | Latest/current persisted review-entry state |
 
 ## Utility
 
@@ -187,6 +222,7 @@ Run this after first-time credential setup:
 
 This bootstrap flow is designed to be idempotent:
 - it creates the configured database and schema if missing
+- it creates the `review_scrape_queue` table if missing
 - it creates the `review_scrape_pipeline_runs` table if missing
 - it creates the `review_scrapes` table if missing
 - it creates the `review_scrape_records` current-state table if missing

@@ -26,6 +26,12 @@ class ReviewScrapeRunTriggerType(StrEnum):
     SINGLE = "single"
 
 
+class ReviewScrapeQueueStatus(StrEnum):
+    UNCLAIMED = "unclaimed"
+    CLAIMED = "claimed"
+    COMPLETED = "completed"
+
+
 class ReviewScrapeRunRecord(Base):
     # TODO: Consider renaming table to `review_scrape_runs` in a future schema
     # cleanup pass once downstream usage is ready for the migration.
@@ -46,11 +52,6 @@ class ReviewScrapeRunRecord(Base):
         String(32),
         nullable=False,
         comment="Expected values: crawl, single.",
-    )
-    source_crawl_run_id: Mapped[str | None] = mapped_column(
-        String(36),
-        nullable=True,
-        comment="Optional sitemap crawl run that sourced PDP URLs for this run.",
     )
     status: Mapped[str] = mapped_column(
         String(32),
@@ -88,6 +89,61 @@ class ReviewScrapeRunRecord(Base):
         DateTime(timezone=False),
         nullable=True,
         comment="Set when the review scrape run reaches a terminal status.",
+    )
+
+
+class ReviewScrapeQueueRecord(Base):
+    __tablename__ = "review_scrape_queue"
+
+    retailer_name: Mapped[str] = mapped_column(
+        String(100),
+        primary_key=True,
+        comment="Retailer/profile key that owns this queued PDP URL.",
+    )
+    product_url: Mapped[str] = mapped_column(
+        String,
+        primary_key=True,
+        comment="Queued PDP URL awaiting successful review scraping.",
+    )
+    queue_status: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default=ReviewScrapeQueueStatus.UNCLAIMED.value,
+        comment="Expected values: unclaimed, claimed, completed.",
+    )
+    attempt_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        comment="Number of review scrape attempts made while this URL was queued.",
+    )
+    latest_review_scrape_run_id: Mapped[str | None] = mapped_column(
+        String(36),
+        nullable=True,
+        comment="Most recent review scrape pipeline run that touched this queued URL.",
+    )
+    latest_error_message: Mapped[str | None] = mapped_column(
+        String,
+        nullable=True,
+        comment="Most recent error message recorded while this URL remained queued.",
+    )
+    enqueued_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=False),
+        nullable=False,
+        server_default=text(
+            "CAST(CONVERT_TIMEZONE('America/New_York', CURRENT_TIMESTAMP()) "
+            "AS TIMESTAMP_NTZ)"
+        ),
+        comment="Time this PDP URL was first inserted into the review scrape queue.",
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=False),
+        nullable=False,
+        server_default=text(
+            "CAST(CONVERT_TIMEZONE('America/New_York', CURRENT_TIMESTAMP()) "
+            "AS TIMESTAMP_NTZ)"
+        ),
+        comment="Time queue metadata was last updated for this PDP URL.",
     )
 
 

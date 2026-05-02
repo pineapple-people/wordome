@@ -3,7 +3,7 @@ from typing import Any
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import desc, exists, select
+from sqlalchemy import desc, select, update
 
 from wordome.domain.reviews.models import ReviewScrapeResult
 from wordome.domain.sitemaps import (
@@ -12,19 +12,19 @@ from wordome.domain.sitemaps import (
 )
 from wordome.infrastructure.database.review_scrape_orm import (
     ReviewScrapeEntryRecord,
+    ReviewScrapeQueueRecord,
+    ReviewScrapeQueueStatus,
     ReviewScrapeRecord,
     ReviewScrapeRunRecord,
+    ReviewScrapeRunStatus,
 )
 from wordome.infrastructure.database.review_scrape_result_codec import (
     ReviewScrapeResultCodec,
 )
 from wordome.infrastructure.database.sitemap_crawl_orm import (
     SitemapCrawlRecord,
-    SitemapCrawlRecordStatus,
-    SitemapCrawlRecordType,
     SitemapCrawlRunRecord,
     SitemapCrawlRunStatus,
-    SitemapCrawlUrlType,
 )
 from wordome.infrastructure.database.snowflake_config import get_snowflake_profile
 from wordome.infrastructure.database.snowflake_connection import SnowflakeConnection
@@ -36,6 +36,7 @@ class SnowflakeRepository:
     """
 
     REVIEW_SCRAPES_TABLE = ReviewScrapeRecord.__tablename__
+    REVIEW_SCRAPE_QUEUE_TABLE = ReviewScrapeQueueRecord.__tablename__
     REVIEW_SCRAPE_PIPELINE_RUNS_TABLE = ReviewScrapeRunRecord.__tablename__
     SITEMAP_CRAWL_RUNS_TABLE = SitemapCrawlRunRecord.__tablename__
     SITEMAP_CRAWL_RECORDS_TABLE = SitemapCrawlRecord.__tablename__
@@ -58,6 +59,7 @@ class SnowflakeRepository:
             "configured_database": self._config.database if self._config else None,
             "configured_schema": self._config.schema_name if self._config else None,
             "review_scrapes_table": self.REVIEW_SCRAPES_TABLE,
+            "review_scrape_queue_table": self.REVIEW_SCRAPE_QUEUE_TABLE,
             "review_scrape_pipeline_runs_table": self.REVIEW_SCRAPE_PIPELINE_RUNS_TABLE,
             "sitemap_crawl_runs_table": self.SITEMAP_CRAWL_RUNS_TABLE,
             "sitemap_crawl_records_table": self.SITEMAP_CRAWL_RECORDS_TABLE,
@@ -66,6 +68,7 @@ class SnowflakeRepository:
             "database_visible": None,
             "schema_visible": None,
             "review_scrapes_table_exists": None,
+            "review_scrape_queue_table_exists": None,
             "review_scrape_pipeline_runs_table_exists": None,
             "review_scrape_records_table_exists": None,
             "can_bootstrap_schema": None,
@@ -88,6 +91,9 @@ class SnowflakeRepository:
             history_table_exists = await self._safe_table_exists(
                 ReviewScrapeRecord.__tablename__
             )
+            queue_table_exists = await self._safe_table_exists(
+                ReviewScrapeQueueRecord.__tablename__
+            )
             run_table_exists = await self._safe_table_exists(
                 ReviewScrapeRunRecord.__tablename__
             )
@@ -95,10 +101,14 @@ class SnowflakeRepository:
                 ReviewScrapeEntryRecord.__tablename__
             )
             result["review_scrapes_table_exists"] = history_table_exists
+            result["review_scrape_queue_table_exists"] = queue_table_exists
             result["review_scrape_pipeline_runs_table_exists"] = run_table_exists
             result["review_scrape_records_table_exists"] = state_table_exists
             result["can_bootstrap_schema"] = (
-                history_table_exists and run_table_exists and state_table_exists
+                history_table_exists
+                and queue_table_exists
+                and run_table_exists
+                and state_table_exists
             )
             result["grants_to_current_role"] = await self._safe_grants_to_current_role()
             return result
@@ -128,6 +138,9 @@ class SnowflakeRepository:
             history_table_exists = await self._safe_table_exists(
                 ReviewScrapeRecord.__tablename__
             )
+            queue_table_exists = await self._safe_table_exists(
+                ReviewScrapeQueueRecord.__tablename__
+            )
             run_table_exists = await self._safe_table_exists(
                 ReviewScrapeRunRecord.__tablename__
             )
@@ -135,10 +148,14 @@ class SnowflakeRepository:
                 ReviewScrapeEntryRecord.__tablename__
             )
             result["review_scrapes_table_exists"] = history_table_exists
+            result["review_scrape_queue_table_exists"] = queue_table_exists
             result["review_scrape_pipeline_runs_table_exists"] = run_table_exists
             result["review_scrape_records_table_exists"] = state_table_exists
             result["can_bootstrap_schema"] = (
-                history_table_exists and run_table_exists and state_table_exists
+                history_table_exists
+                and queue_table_exists
+                and run_table_exists
+                and state_table_exists
             )
         elif result["database_visible"]:
             result["errors"].append(
@@ -198,6 +215,29 @@ class SnowflakeRepository:
 
         return await self._connection.run_session(_update)
 
+    async def get_sitemap_crawl_run(self, crawl_run_id: str) -> dict[str, Any] | None:
+        record = await self._connection.run_session(
+            lambda session: session.get(SitemapCrawlRunRecord, crawl_run_id)
+        )
+        if record is None:
+            return None
+        return {
+            "crawl_run_id": record.crawl_run_id,
+            "retailer_name": record.retailer_name,
+            "entrypoint_url": record.entrypoint_url,
+            "status": record.status,
+            "processed_sitemaps_count": record.processed_sitemaps_count,
+            "skipped_sitemaps_count": record.skipped_sitemaps_count,
+            "discovered_url_count": record.discovered_url_count,
+            "error_count": record.error_count,
+            "started_at": record.started_at.isoformat()
+            if record.started_at is not None
+            else None,
+            "completed_at": record.completed_at.isoformat()
+            if record.completed_at is not None
+            else None,
+        }
+
     async def fail_sitemap_crawl_run(
         self,
         *,
@@ -217,6 +257,275 @@ class SnowflakeRepository:
             record.status = SitemapCrawlRunStatus.FAILED.value
             session.flush()
             return record.crawl_run_id
+
+        return await self._connection.run_session(_update)
+
+    async def create_review_scrape_run(
+        self,
+        *,
+        retailer_name: str,
+        trigger_type: str,
+        selected_url_count: int = 0,
+    ) -> str:
+        record = ReviewScrapeRunRecord(
+            retailer_name=retailer_name,
+            trigger_type=trigger_type,
+            status=ReviewScrapeRunStatus.RUNNING.value,
+            selected_url_count=selected_url_count,
+        )
+
+        def _insert(session):
+            session.add(record)
+            session.flush()
+            return record.review_scrape_run_id
+
+        return await self._connection.run_session(_insert)
+
+    async def update_review_scrape_run_selected_count(
+        self,
+        *,
+        review_scrape_run_id: str,
+        selected_url_count: int,
+    ) -> str:
+        def _update(session):
+            record = session.get(ReviewScrapeRunRecord, review_scrape_run_id)
+            if record is None:
+                raise RuntimeError(f"Missing review scrape run: {review_scrape_run_id}")
+            record.selected_url_count = selected_url_count
+            session.flush()
+            return record.review_scrape_run_id
+
+        return await self._connection.run_session(_update)
+
+    async def enqueue_review_scrape_urls(
+        self,
+        *,
+        retailer_name: str,
+        product_urls: list[str],
+    ) -> dict[str, int]:
+        if not product_urls:
+            return {
+                "inserted_queue_record_count": 0,
+                "existing_queue_record_count": 0,
+                "touched_queue_record_count": 0,
+            }
+
+        unique_product_urls = list(dict.fromkeys(product_urls))
+        observed_at = self._new_york_now_naive()
+
+        def _upsert(session):
+            existing_records: dict[str, ReviewScrapeQueueRecord] = {}
+            chunk_size = 1000
+            for chunk_start in range(0, len(unique_product_urls), chunk_size):
+                chunk_urls = unique_product_urls[chunk_start : chunk_start + chunk_size]
+                chunk_records = (
+                    session.execute(
+                        select(ReviewScrapeQueueRecord).where(
+                            ReviewScrapeQueueRecord.retailer_name == retailer_name,
+                            ReviewScrapeQueueRecord.product_url.in_(chunk_urls),
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                existing_records.update(
+                    {record.product_url: record for record in chunk_records}
+                )
+
+            inserted_count = 0
+            existing_count = 0
+            for product_url in unique_product_urls:
+                existing_record = existing_records.get(product_url)
+                if existing_record is not None:
+                    existing_count += 1
+                    continue
+                session.add(
+                    ReviewScrapeQueueRecord(
+                        retailer_name=retailer_name,
+                        product_url=product_url,
+                        queue_status=ReviewScrapeQueueStatus.UNCLAIMED.value,
+                        attempt_count=0,
+                        latest_review_scrape_run_id=None,
+                        latest_error_message=None,
+                        enqueued_at=observed_at,
+                        updated_at=observed_at,
+                    )
+                )
+                inserted_count += 1
+
+            session.flush()
+            return {
+                "inserted_queue_record_count": inserted_count,
+                "existing_queue_record_count": existing_count,
+                "touched_queue_record_count": inserted_count + existing_count,
+            }
+
+        return await self._connection.run_session(_upsert)
+
+    async def claim_review_scrape_queue_urls(
+        self,
+        *,
+        retailer_name: str,
+        limit: int = 10,
+        review_scrape_run_id: str,
+    ) -> list[str]:
+        observed_at = self._new_york_now_naive()
+
+        def _claim(session):
+            candidate_urls = list(
+                session.execute(
+                    select(ReviewScrapeQueueRecord.product_url)
+                    .where(
+                        ReviewScrapeQueueRecord.retailer_name == retailer_name,
+                        ReviewScrapeQueueRecord.queue_status
+                        == ReviewScrapeQueueStatus.UNCLAIMED.value,
+                    )
+                    .order_by(
+                        ReviewScrapeQueueRecord.attempt_count.asc(),
+                        ReviewScrapeQueueRecord.updated_at.asc(),
+                        ReviewScrapeQueueRecord.enqueued_at.asc(),
+                        ReviewScrapeQueueRecord.product_url.asc(),
+                    )
+                    .limit(limit)
+                )
+                .scalars()
+                .all()
+            )
+            if not candidate_urls:
+                return []
+
+            session.execute(
+                update(ReviewScrapeQueueRecord)
+                .where(
+                    ReviewScrapeQueueRecord.retailer_name == retailer_name,
+                    ReviewScrapeQueueRecord.product_url.in_(candidate_urls),
+                    ReviewScrapeQueueRecord.queue_status
+                    == ReviewScrapeQueueStatus.UNCLAIMED.value,
+                )
+                .values(
+                    queue_status=ReviewScrapeQueueStatus.CLAIMED.value,
+                    attempt_count=ReviewScrapeQueueRecord.attempt_count + 1,
+                    latest_review_scrape_run_id=review_scrape_run_id,
+                    latest_error_message=None,
+                    updated_at=observed_at,
+                )
+            )
+            session.flush()
+            return list(
+                session.execute(
+                    select(ReviewScrapeQueueRecord.product_url)
+                    .where(
+                        ReviewScrapeQueueRecord.retailer_name == retailer_name,
+                        ReviewScrapeQueueRecord.latest_review_scrape_run_id
+                        == review_scrape_run_id,
+                        ReviewScrapeQueueRecord.queue_status
+                        == ReviewScrapeQueueStatus.CLAIMED.value,
+                        ReviewScrapeQueueRecord.updated_at == observed_at,
+                    )
+                    .order_by(ReviewScrapeQueueRecord.product_url.asc())
+                )
+                .scalars()
+                .all()
+            )
+
+        for _ in range(3):
+            claimed_urls = await self._connection.run_session(_claim)
+            if claimed_urls or limit <= 0:
+                return claimed_urls
+        return []
+
+    async def record_review_scrape_queue_failure(
+        self,
+        *,
+        retailer_name: str,
+        product_url: str,
+        latest_error_message: str,
+    ) -> None:
+        observed_at = self._new_york_now_naive()
+
+        def _update(session):
+            record = session.get(
+                ReviewScrapeQueueRecord,
+                (retailer_name, product_url),
+            )
+            if record is None:
+                raise RuntimeError(
+                    "Missing review scrape queue record: "
+                    f"{retailer_name=} {product_url=}"
+                )
+            record.queue_status = ReviewScrapeQueueStatus.UNCLAIMED.value
+            record.latest_error_message = latest_error_message
+            record.updated_at = observed_at
+            session.flush()
+
+        await self._connection.run_session(_update)
+
+    async def mark_review_scrape_queue_completed(
+        self,
+        *,
+        retailer_name: str,
+        product_url: str,
+    ) -> None:
+        observed_at = self._new_york_now_naive()
+
+        def _update(session):
+            record = session.get(
+                ReviewScrapeQueueRecord,
+                (retailer_name, product_url),
+            )
+            if record is None:
+                raise RuntimeError(
+                    "Missing review scrape queue record: "
+                    f"{retailer_name=} {product_url=}"
+                )
+            record.queue_status = ReviewScrapeQueueStatus.COMPLETED.value
+            record.latest_error_message = None
+            record.updated_at = observed_at
+            session.flush()
+
+        await self._connection.run_session(_update)
+
+    async def finalize_review_scrape_run(
+        self,
+        *,
+        review_scrape_run_id: str,
+        success_count: int,
+        failure_count: int,
+    ) -> str:
+        def _update(session):
+            record = session.get(ReviewScrapeRunRecord, review_scrape_run_id)
+            if record is None:
+                raise RuntimeError(f"Missing review scrape run: {review_scrape_run_id}")
+            record.success_count = success_count
+            record.failure_count = failure_count
+            record.completed_at = self._new_york_now_naive()
+            record.status = (
+                ReviewScrapeRunStatus.COMPLETED_WITH_ERRORS.value
+                if failure_count > 0
+                else ReviewScrapeRunStatus.COMPLETED.value
+            )
+            session.flush()
+            return record.review_scrape_run_id
+
+        return await self._connection.run_session(_update)
+
+    async def fail_review_scrape_run(
+        self,
+        *,
+        review_scrape_run_id: str,
+        success_count: int = 0,
+        failure_count: int = 0,
+    ) -> str:
+        def _update(session):
+            record = session.get(ReviewScrapeRunRecord, review_scrape_run_id)
+            if record is None:
+                raise RuntimeError(f"Missing review scrape run: {review_scrape_run_id}")
+            record.success_count = success_count
+            record.failure_count = failure_count
+            record.completed_at = self._new_york_now_naive()
+            record.status = ReviewScrapeRunStatus.FAILED.value
+            session.flush()
+            return record.review_scrape_run_id
 
         return await self._connection.run_session(_update)
 
@@ -352,43 +661,6 @@ class SnowflakeRepository:
             )
         )
         return [ReviewScrapeResultCodec.from_record(record) for record in records]
-
-    async def list_pdp_urls_for_review_scrape(
-        self,
-        *,
-        retailer_name: str,
-        limit: int = 10,
-        only_unscraped: bool = True,
-    ) -> list[str]:
-        def _select_urls(session):
-            statement = (
-                select(SitemapCrawlRecord.record_url)
-                .where(
-                    SitemapCrawlRecord.retailer_name == retailer_name,
-                    SitemapCrawlRecord.record_type
-                    == SitemapCrawlRecordType.DISCOVERED_URL.value,
-                    SitemapCrawlRecord.url_type == SitemapCrawlUrlType.PDP.value,
-                    SitemapCrawlRecord.record_status
-                    == SitemapCrawlRecordStatus.DISCOVERED.value,
-                )
-                .order_by(
-                    SitemapCrawlRecord.first_encountered_at.asc(),
-                    SitemapCrawlRecord.record_url.asc(),
-                )
-                .limit(limit)
-            )
-            if only_unscraped:
-                statement = statement.where(
-                    ~exists(
-                        select(1).where(
-                            ReviewScrapeRecord.product_url
-                            == SitemapCrawlRecord.record_url
-                        )
-                    )
-                )
-            return list(session.execute(statement).scalars().all())
-
-        return await self._connection.run_session(_select_urls)
 
     async def _safe_table_exists(self, table_name: str) -> bool | None:
         try:

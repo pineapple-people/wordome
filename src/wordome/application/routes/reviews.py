@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from wordome.domain import SitemapPdpDiscoverer
+from wordome.infrastructure.database.review_scrape_orm import ReviewScrapeRunTriggerType
 from wordome.infrastructure.database.snowflake_repository import SnowflakeRepository
 
 from .sandbox import (
@@ -18,7 +19,6 @@ router = APIRouter(tags=["reviews"])
 class RetailerReviewScrapeRequest(BaseModel):
     retailer_name: str
     limit: int = 10
-    only_unscraped: bool = True
 
 
 class AdHocReviewScrapeRequest(BaseModel):
@@ -50,53 +50,85 @@ async def create_review_scrape_from_crawl(
         resolved_retailer_name,
         http_request,
     )
-    pdp_urls = await sf_repository.list_pdp_urls_for_review_scrape(
+    review_scrape_run_id = await sf_repository.create_review_scrape_run(
+        retailer_name=resolved_retailer_name,
+        trigger_type=ReviewScrapeRunTriggerType.CRAWL.value,
+    )
+    pdp_urls = await sf_repository.claim_review_scrape_queue_urls(
         retailer_name=resolved_retailer_name,
         limit=request.limit,
-        only_unscraped=request.only_unscraped,
+        review_scrape_run_id=review_scrape_run_id,
+    )
+    await sf_repository.update_review_scrape_run_selected_count(
+        review_scrape_run_id=review_scrape_run_id,
+        selected_url_count=len(pdp_urls),
     )
 
     results: list[dict[str, str | int | bool | None]] = []
     success_count = 0
     failure_count = 0
 
-    for pdp_url in pdp_urls:
-        try:
-            scrape_result, snapshot_event_id = await _scrape_and_append_ikea_reviews(
-                pdp_url,
-                scraper,
-                sf_repository,
-            )
-        except Exception as exc:
-            failure_count += 1
-            results.append(
-                {
-                    "product_url": pdp_url,
-                    "success": False,
-                    "error": str(exc),
-                }
-            )
-            continue
-
-        success_count += 1
-        results.append(
-            {
-                "product_url": pdp_url,
-                "success": True,
-                "snapshot_event_id": snapshot_event_id,
-                "reviews_count": scrape_result.reviews_count,
-                "review_page_url": scrape_result.review_page_url,
-            }
+    try:
+        for pdp_url in pdp_urls:
+            try:
+                (
+                    scrape_result,
+                    snapshot_event_id,
+                ) = await _scrape_and_append_ikea_reviews(
+                    pdp_url,
+                    scraper,
+                    sf_repository,
+                )
+                await sf_repository.mark_review_scrape_queue_completed(
+                    retailer_name=resolved_retailer_name,
+                    product_url=pdp_url,
+                )
+                success_count += 1
+                results.append(
+                    {
+                        "product_url": pdp_url,
+                        "success": True,
+                        "snapshot_event_id": snapshot_event_id,
+                        "reviews_count": scrape_result.reviews_count,
+                        "review_page_url": scrape_result.review_page_url,
+                    }
+                )
+            except Exception as exc:
+                failure_count += 1
+                await sf_repository.record_review_scrape_queue_failure(
+                    retailer_name=resolved_retailer_name,
+                    product_url=pdp_url,
+                    latest_error_message=str(exc),
+                )
+                results.append(
+                    {
+                        "product_url": pdp_url,
+                        "success": False,
+                        "error": str(exc),
+                    }
+                )
+                continue
+        await sf_repository.finalize_review_scrape_run(
+            review_scrape_run_id=review_scrape_run_id,
+            success_count=success_count,
+            failure_count=failure_count,
         )
+    except Exception:
+        await sf_repository.fail_review_scrape_run(
+            review_scrape_run_id=review_scrape_run_id,
+            success_count=success_count,
+            failure_count=failure_count,
+        )
+        raise
 
     return {
         "success": failure_count == 0,
+        "review_scrape_run_id": review_scrape_run_id,
         "retailer_name": resolved_retailer_name,
         "selected_pdp_url_count": len(pdp_urls),
         "processed_pdp_url_count": len(results),
         "success_count": success_count,
         "failure_count": failure_count,
-        "only_unscraped": request.only_unscraped,
         "results": results,
     }
 
@@ -125,17 +157,37 @@ async def create_single_review_scrape(
         http_request,
     )
     if request.persist_result:
-        scrape_result, snapshot_event_id = await _scrape_and_append_ikea_reviews(
-            request.product_url,
-            scraper,
-            sf_repository,
+        review_scrape_run_id = await sf_repository.create_review_scrape_run(
+            retailer_name=resolved_retailer_name,
+            trigger_type=ReviewScrapeRunTriggerType.SINGLE.value,
+            selected_url_count=1,
         )
+        try:
+            scrape_result, snapshot_event_id = await _scrape_and_append_ikea_reviews(
+                request.product_url,
+                scraper,
+                sf_repository,
+            )
+            await sf_repository.finalize_review_scrape_run(
+                review_scrape_run_id=review_scrape_run_id,
+                success_count=1,
+                failure_count=0,
+            )
+        except Exception:
+            await sf_repository.fail_review_scrape_run(
+                review_scrape_run_id=review_scrape_run_id,
+                success_count=0,
+                failure_count=1,
+            )
+            raise
     else:
+        review_scrape_run_id = None
         scrape_result = await _scrape_ikea_reviews(request.product_url, scraper)
         snapshot_event_id = None
 
     return {
         "success": True,
+        "review_scrape_run_id": review_scrape_run_id,
         "retailer_name": resolved_retailer_name,
         "product_url": scrape_result.product_url,
         "review_page_url": scrape_result.review_page_url,
