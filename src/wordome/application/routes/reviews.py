@@ -1,8 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from wordome.domain import SitemapPdpDiscoverer
-from wordome.infrastructure.database.review_scrape_orm import ReviewScrapeRunTriggerType
+from wordome.infrastructure.database.review_scrape_orm import (
+    ReviewScrapeQueueStatus,
+    ReviewScrapeRunTriggerType,
+)
 from wordome.infrastructure.database.snowflake_repository import SnowflakeRepository
 
 from .sandbox import (
@@ -25,6 +28,56 @@ class AdHocReviewScrapeRequest(BaseModel):
     retailer_name: str
     product_url: str
     persist_result: bool = True
+
+
+@router.get("/review-scrape-queue")
+async def get_review_scrape_queue(
+    retailer_name: str | None = Query(default=None),
+    queue_status: str | None = Query(default=None),
+    limit: int = Query(default=10, ge=1, le=500),
+    sf_repository: SnowflakeRepository = Depends(_get_repository),
+):
+    """
+    Inspect queue rows in the sitemap-to-review handoff layer.
+    """
+    if queue_status is not None and queue_status not in {
+        ReviewScrapeQueueStatus.UNCLAIMED.value,
+        ReviewScrapeQueueStatus.CLAIMED.value,
+        ReviewScrapeQueueStatus.COMPLETED.value,
+    }:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Invalid queue_status. Expected one of: unclaimed, claimed, completed."
+            ),
+        )
+
+    queue_view = await sf_repository.list_review_scrape_queue_records(
+        retailer_name=retailer_name,
+        queue_status=queue_status,
+        limit=limit,
+    )
+    return {
+        "retailer_name": retailer_name,
+        "queue_status": queue_status,
+        "item_limit": limit,
+        "item_count_returned": len(queue_view["items"]),
+        "item_count_total": queue_view["item_count_total"],
+        "items": queue_view["items"],
+    }
+
+
+@router.get("/review-scrape-queue/summary")
+async def get_review_scrape_queue_summary(
+    retailer_name: str | None = Query(default=None),
+    sf_repository: SnowflakeRepository = Depends(_get_repository),
+):
+    """
+    Return aggregate counts for the review scrape queue.
+    """
+    return await sf_repository.summarize_review_scrape_queue(
+        retailer_name=retailer_name
+    )
 
 
 @router.post("/review-scrapes/crawl")

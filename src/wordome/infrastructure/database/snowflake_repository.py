@@ -3,7 +3,7 @@ from typing import Any
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import desc, select, update
+from sqlalchemy import desc, func, select, update
 
 from wordome.domain.reviews.models import ReviewScrapeResult
 from wordome.domain.sitemaps import (
@@ -433,6 +433,94 @@ class SnowflakeRepository:
             if claimed_urls or limit <= 0:
                 return claimed_urls
         return []
+
+    async def list_review_scrape_queue_records(
+        self,
+        *,
+        retailer_name: str | None = None,
+        queue_status: str | None = None,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        def _select(session):
+            statement = select(ReviewScrapeQueueRecord)
+            if retailer_name is not None:
+                statement = statement.where(
+                    ReviewScrapeQueueRecord.retailer_name == retailer_name
+                )
+            if queue_status is not None:
+                statement = statement.where(
+                    ReviewScrapeQueueRecord.queue_status == queue_status
+                )
+            total_count = session.execute(
+                select(func.count()).select_from(statement.subquery())
+            ).scalar_one()
+            records = (
+                session.execute(
+                    statement.order_by(
+                        ReviewScrapeQueueRecord.updated_at.desc(),
+                        ReviewScrapeQueueRecord.enqueued_at.desc(),
+                        ReviewScrapeQueueRecord.product_url.asc(),
+                    ).limit(limit)
+                )
+                .scalars()
+                .all()
+            )
+            return {
+                "item_count_total": total_count,
+                "items": [
+                    {
+                        "retailer_name": record.retailer_name,
+                        "product_url": record.product_url,
+                        "queue_status": record.queue_status,
+                        "attempt_count": record.attempt_count,
+                        "latest_review_scrape_run_id": (
+                            record.latest_review_scrape_run_id
+                        ),
+                        "latest_error_message": record.latest_error_message,
+                        "enqueued_at": record.enqueued_at.isoformat()
+                        if record.enqueued_at is not None
+                        else None,
+                        "updated_at": record.updated_at.isoformat()
+                        if record.updated_at is not None
+                        else None,
+                    }
+                    for record in records
+                ],
+            }
+
+        return await self._connection.run_session(_select)
+
+    async def summarize_review_scrape_queue(
+        self,
+        *,
+        retailer_name: str | None = None,
+    ) -> dict[str, Any]:
+        def _select(session):
+            statement = select(
+                ReviewScrapeQueueRecord.queue_status,
+                func.count().label("row_count"),
+            )
+            if retailer_name is not None:
+                statement = statement.where(
+                    ReviewScrapeQueueRecord.retailer_name == retailer_name
+                )
+            rows = session.execute(
+                statement.group_by(ReviewScrapeQueueRecord.queue_status)
+            ).all()
+            counts_by_status = {
+                ReviewScrapeQueueStatus.UNCLAIMED.value: 0,
+                ReviewScrapeQueueStatus.CLAIMED.value: 0,
+                ReviewScrapeQueueStatus.COMPLETED.value: 0,
+            }
+            for queue_status_value, row_count in rows:
+                counts_by_status[queue_status_value] = row_count
+            return {
+                "retailer_name": retailer_name,
+                "total_count": sum(counts_by_status.values()),
+                "counts_by_status": counts_by_status,
+            }
+
+        return await self._connection.run_session(_select)
 
     async def record_review_scrape_queue_failure(
         self,

@@ -131,6 +131,16 @@ Optional ad-hoc single PDP processing:
     -d '{"retailer_name":"ikea","product_url":"https://www.ikea.com/us/en/p/slattum-upholstered-bed-frame-vissle-dark-gray-40571253/","persist_result":true}'
 ```
 
+Queue inspection:
+
+```bash
+# View queue items, optionally filtered by retailer_name and queue_status
+> curl "http://127.0.0.1:8000/review-scrape-queue?retailer_name=ikea&queue_status=unclaimed&limit=10"
+
+# View aggregate queue counts, optionally filtered by retailer_name
+> curl "http://127.0.0.1:8000/review-scrape-queue/summary?retailer_name=ikea"
+```
+
 Sandbox routes remain available for POC and debugging workflows under
 `/sandbox/...`, but the generated Swagger docs should be the primary reference
 for the public API surface.
