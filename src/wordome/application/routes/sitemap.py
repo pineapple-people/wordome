@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import suppress
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
@@ -57,6 +58,14 @@ async def _run_sitemap_crawl_in_background(
             crawl_run_id=crawl_run_id,
             result=result,
         )
+    except asyncio.CancelledError:
+        # Shutdown can cancel an in-flight background crawl.
+        with suppress(Exception):
+            await sf_repository.fail_sitemap_crawl_run(
+                crawl_run_id=crawl_run_id,
+                result=result,
+            )
+        return
     except Exception:
         with suppress(Exception):
             await sf_repository.fail_sitemap_crawl_run(
