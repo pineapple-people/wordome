@@ -28,30 +28,23 @@ class RetailerSitemapCrawlRequest(BaseModel):
     max_sitemaps: int | None = None
 
 
-async def _run_sitemap_crawl_in_background(
-    request: RetailerSitemapCrawlRequest,
+async def _persist_sitemap_crawl_results(
     *,
     crawl_run_id: str,
     resolved_retailer_name: str,
+    result,
+    crawl_observations: list[SitemapCrawlRecordObservation],
     discoverer: SitemapPdpDiscoverer,
     sf_repository: SnowflakeRepository,
 ) -> None:
-    crawl_observations: list[SitemapCrawlRecordObservation] = []
-    result = None
     trace = create_trace(
-        "SitemapBackgroundTask",
+        "SitemapPersistencePipeline",
         getattr(discoverer, "trace_mode", TraceMode.OFF),
     )
+    deduped_observations = _dedupe_crawl_record_observations(crawl_observations)
 
     trace.start()
     try:
-        with trace.step("discover pdp urls"):
-            result = await _discover_pdp_links(
-                request,
-                discoverer,
-                record_observer=crawl_observations.append,
-            )
-        deduped_observations = _dedupe_crawl_record_observations(crawl_observations)
         trace.callout("crawl observations", str(len(deduped_observations)))
         with trace.step("persist sitemap crawl records"):
             await sf_repository.upsert_sitemap_crawl_records(
@@ -69,6 +62,34 @@ async def _run_sitemap_crawl_in_background(
                 crawl_run_id=crawl_run_id,
                 result=result,
             )
+    finally:
+        trace.stop()
+
+
+async def _run_sitemap_crawl_in_background(
+    request: RetailerSitemapCrawlRequest,
+    *,
+    crawl_run_id: str,
+    resolved_retailer_name: str,
+    discoverer: SitemapPdpDiscoverer,
+    sf_repository: SnowflakeRepository,
+) -> None:
+    crawl_observations: list[SitemapCrawlRecordObservation] = []
+    result = None
+    try:
+        result = await _discover_pdp_links(
+            request,
+            discoverer,
+            record_observer=crawl_observations.append,
+        )
+        await _persist_sitemap_crawl_results(
+            crawl_run_id=crawl_run_id,
+            resolved_retailer_name=resolved_retailer_name,
+            result=result,
+            crawl_observations=crawl_observations,
+            discoverer=discoverer,
+            sf_repository=sf_repository,
+        )
     except asyncio.CancelledError:
         # Shutdown can cancel an in-flight background crawl.
         with suppress(Exception):
@@ -84,8 +105,6 @@ async def _run_sitemap_crawl_in_background(
                 result=result,
             )
         raise
-    finally:
-        trace.stop()
 
 
 @router.post("/sitemap-crawls")
