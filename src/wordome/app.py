@@ -1,3 +1,5 @@
+from contextlib import suppress
+
 import uvicorn
 from fastapi import FastAPI
 
@@ -26,4 +28,10 @@ if __name__ == "__main__":
     """
     Standalone execution for debugging purposes only
     """
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    with suppress(KeyboardInterrupt):
+        uvicorn.run(
+            app,
+            host="127.0.0.1",
+            port=8000,
+            timeout_graceful_shutdown=10,
+        )
