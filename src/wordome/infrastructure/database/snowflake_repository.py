@@ -1,5 +1,6 @@
+from collections.abc import Iterator
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, TypeVar
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
@@ -29,6 +30,8 @@ from wordome.infrastructure.database.sitemap_crawl_orm import (
 from wordome.infrastructure.database.snowflake_config import get_snowflake_profile
 from wordome.infrastructure.database.snowflake_connection import SnowflakeConnection
 
+T = TypeVar("T")
+
 
 class SnowflakeRepository:
     """
@@ -46,6 +49,11 @@ class SnowflakeRepository:
     def __init__(self, connection: SnowflakeConnection | None = None):
         self._connection = connection or SnowflakeConnection()
         self._config = get_snowflake_profile() if connection is None else None
+
+    @staticmethod
+    def _iter_batches(items: list[T], batch_size: int = 1000) -> Iterator[list[T]]:
+        for batch_start in range(0, len(items), batch_size):
+            yield items[batch_start : batch_start + batch_size]
 
     async def is_connected(self) -> bool:
         return await self._connection.is_connected()
@@ -313,28 +321,25 @@ class SnowflakeRepository:
         unique_product_urls = list(dict.fromkeys(product_urls))
         observed_at = self._new_york_now_naive()
 
-        def _upsert(session):
+        def _upsert_batch(session, product_url_batch: list[str]):
             existing_records: dict[str, ReviewScrapeQueueRecord] = {}
-            chunk_size = 1000
-            for chunk_start in range(0, len(unique_product_urls), chunk_size):
-                chunk_urls = unique_product_urls[chunk_start : chunk_start + chunk_size]
-                chunk_records = (
-                    session.execute(
-                        select(ReviewScrapeQueueRecord).where(
-                            ReviewScrapeQueueRecord.retailer_name == retailer_name,
-                            ReviewScrapeQueueRecord.product_url.in_(chunk_urls),
-                        )
+            chunk_records = (
+                session.execute(
+                    select(ReviewScrapeQueueRecord).where(
+                        ReviewScrapeQueueRecord.retailer_name == retailer_name,
+                        ReviewScrapeQueueRecord.product_url.in_(product_url_batch),
                     )
-                    .scalars()
-                    .all()
                 )
-                existing_records.update(
-                    {record.product_url: record for record in chunk_records}
-                )
+                .scalars()
+                .all()
+            )
+            existing_records.update(
+                {record.product_url: record for record in chunk_records}
+            )
 
             inserted_count = 0
             existing_count = 0
-            for product_url in unique_product_urls:
+            for product_url in product_url_batch:
                 existing_record = existing_records.get(product_url)
                 if existing_record is not None:
                     existing_count += 1
@@ -360,7 +365,18 @@ class SnowflakeRepository:
                 "touched_queue_record_count": inserted_count + existing_count,
             }
 
-        return await self._connection.run_session(_upsert)
+        totals = {
+            "inserted_queue_record_count": 0,
+            "existing_queue_record_count": 0,
+            "touched_queue_record_count": 0,
+        }
+        for product_url_batch in self._iter_batches(unique_product_urls):
+            batch_counts = await self._connection.run_session(
+                lambda session, batch=product_url_batch: _upsert_batch(session, batch)
+            )
+            for key, value in batch_counts.items():
+                totals[key] += value
+        return totals
 
     async def claim_review_scrape_queue_urls(
         self,
@@ -624,32 +640,40 @@ class SnowflakeRepository:
         retailer_name: str,
         records: list[SitemapCrawlRecordObservation],
     ) -> dict[str, int]:
+        if not records:
+            return {
+                "inserted_record_count": 0,
+                "updated_record_count": 0,
+                "unchanged_record_count": 0,
+                "touched_record_count": 0,
+            }
+
         observed_at = self._new_york_now_naive()
 
-        def _upsert(session):
+        def _upsert_batch(
+            session,
+            record_batch: list[SitemapCrawlRecordObservation],
+        ):
             inserted_count = 0
             updated_count = 0
             unchanged_count = 0
             existing_records: dict[str, SitemapCrawlRecord] = {}
-            record_urls = [record.record_url for record in records]
-            chunk_size = 1000
-            for chunk_start in range(0, len(record_urls), chunk_size):
-                chunk_urls = record_urls[chunk_start : chunk_start + chunk_size]
-                chunk_records = (
-                    session.execute(
-                        select(SitemapCrawlRecord).where(
-                            SitemapCrawlRecord.retailer_name == retailer_name,
-                            SitemapCrawlRecord.record_url.in_(chunk_urls),
-                        )
+            record_urls = [record.record_url for record in record_batch]
+            chunk_records = (
+                session.execute(
+                    select(SitemapCrawlRecord).where(
+                        SitemapCrawlRecord.retailer_name == retailer_name,
+                        SitemapCrawlRecord.record_url.in_(record_urls),
                     )
-                    .scalars()
-                    .all()
                 )
-                existing_records.update(
-                    {record.record_url: record for record in chunk_records}
-                )
+                .scalars()
+                .all()
+            )
+            existing_records.update(
+                {record.record_url: record for record in chunk_records}
+            )
 
-            for observation in records:
+            for observation in record_batch:
                 record = existing_records.get(observation.record_url)
                 if record is None:
                     record = SitemapCrawlRecord(
@@ -715,7 +739,19 @@ class SnowflakeRepository:
                 + unchanged_count,
             }
 
-        return await self._connection.run_session(_upsert)
+        totals = {
+            "inserted_record_count": 0,
+            "updated_record_count": 0,
+            "unchanged_record_count": 0,
+            "touched_record_count": 0,
+        }
+        for record_batch in self._iter_batches(records):
+            batch_counts = await self._connection.run_session(
+                lambda session, batch=record_batch: _upsert_batch(session, batch)
+            )
+            for key, value in batch_counts.items():
+                totals[key] += value
+        return totals
 
     def _new_york_now_naive(self) -> datetime:
         return datetime.now(self.NEW_YORK_TZ).replace(tzinfo=None)

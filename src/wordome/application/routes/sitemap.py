@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from wordome.domain import SitemapCrawlRecordObservation, SitemapPdpDiscoverer
 from wordome.infrastructure.database.snowflake_repository import SnowflakeRepository
+from wordome.support import TraceMode, create_trace
 
 from .sandbox import (
     _dedupe_crawl_record_observations,
@@ -37,27 +38,37 @@ async def _run_sitemap_crawl_in_background(
 ) -> None:
     crawl_observations: list[SitemapCrawlRecordObservation] = []
     result = None
+    trace = create_trace(
+        "SitemapBackgroundTask",
+        getattr(discoverer, "trace_mode", TraceMode.OFF),
+    )
 
+    trace.start()
     try:
-        result = await _discover_pdp_links(
-            request,
-            discoverer,
-            record_observer=crawl_observations.append,
-        )
+        with trace.step("discover pdp urls"):
+            result = await _discover_pdp_links(
+                request,
+                discoverer,
+                record_observer=crawl_observations.append,
+            )
         deduped_observations = _dedupe_crawl_record_observations(crawl_observations)
-        await sf_repository.upsert_sitemap_crawl_records(
-            crawl_run_id=crawl_run_id,
-            retailer_name=resolved_retailer_name,
-            records=deduped_observations,
-        )
-        await sf_repository.enqueue_review_scrape_urls(
-            retailer_name=resolved_retailer_name,
-            product_urls=result.pdp_urls,
-        )
-        await sf_repository.finalize_sitemap_crawl_run(
-            crawl_run_id=crawl_run_id,
-            result=result,
-        )
+        trace.callout("crawl observations", str(len(deduped_observations)))
+        with trace.step("persist sitemap crawl records"):
+            await sf_repository.upsert_sitemap_crawl_records(
+                crawl_run_id=crawl_run_id,
+                retailer_name=resolved_retailer_name,
+                records=deduped_observations,
+            )
+        with trace.step("enqueue review scrape urls"):
+            await sf_repository.enqueue_review_scrape_urls(
+                retailer_name=resolved_retailer_name,
+                product_urls=result.pdp_urls,
+            )
+        with trace.step("finalize sitemap crawl run"):
+            await sf_repository.finalize_sitemap_crawl_run(
+                crawl_run_id=crawl_run_id,
+                result=result,
+            )
     except asyncio.CancelledError:
         # Shutdown can cancel an in-flight background crawl.
         with suppress(Exception):
@@ -72,6 +83,9 @@ async def _run_sitemap_crawl_in_background(
                 crawl_run_id=crawl_run_id,
                 result=result,
             )
+        raise
+    finally:
+        trace.stop()
 
 
 @router.post("/sitemap-crawls")

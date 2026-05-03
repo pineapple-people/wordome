@@ -390,7 +390,7 @@ class SitemapDiscovererService:
                         )
 
             trace.message(
-                f"crawl complete: {len(processed_sitemaps)} processed sitemaps, "
+                f"discovery complete: {len(processed_sitemaps)} processed sitemaps, "
                 f"{len(pdp_urls)} pdp urls, {len(errors)} errors",
                 level="info",
             )
