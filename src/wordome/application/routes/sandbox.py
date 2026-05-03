@@ -12,7 +12,7 @@ from wordome.domain import (
 from wordome.domain.demo import ReviewSectionDetector
 from wordome.infrastructure import (
     ReviewsScraperIkea,
-    SitemapPdpDiscovererService,
+    SitemapDiscovererService,
     WebFetcher,
 )
 from wordome.infrastructure.database.review_scrape_orm import ReviewScrapeRunTriggerType
@@ -101,7 +101,7 @@ def _get_ikea_scraper(request: Request) -> ReviewsScraper:
 
 def _get_sitemap_pdp_discoverer(request: Request) -> SitemapPdpDiscoverer:
     discoverer = getattr(request.app.state, "sitemap_pdp_discoverer", None)
-    if not isinstance(discoverer, SitemapPdpDiscovererService):
+    if not isinstance(discoverer, SitemapDiscovererService):
         raise RuntimeError("Sitemap PDP discoverer is not configured on app.state")
     return discoverer
 
