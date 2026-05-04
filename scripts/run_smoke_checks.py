@@ -4,7 +4,9 @@ from wordome.app import create_app
 from wordome.infrastructure.database.review_scrape_orm import (
     Base,
     ReviewScrapeEntryRecord,
+    ReviewScrapeQueueRecord,
     ReviewScrapeRecord,
+    ReviewScrapeRunRecord,
 )
 from wordome.infrastructure.database.sitemap_crawl_orm import (
     SitemapCrawlRecord,
@@ -17,6 +19,8 @@ def main() -> None:
     expected_tables = {
         ReviewScrapeRecord.__tablename__,
         ReviewScrapeEntryRecord.__tablename__,
+        ReviewScrapeQueueRecord.__tablename__,
+        ReviewScrapeRunRecord.__tablename__,
         SitemapCrawlRunRecord.__tablename__,
         SitemapCrawlRecord.__tablename__,
     }

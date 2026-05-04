@@ -1,10 +1,13 @@
 import asyncio
+import json
 
 from sqlalchemy import text
 
 from wordome.infrastructure.database.review_scrape_orm import (
     ReviewScrapeEntryRecord,
+    ReviewScrapeQueueRecord,
     ReviewScrapeRecord,
+    ReviewScrapeRunRecord,
 )
 from wordome.infrastructure.database.sitemap_crawl_orm import (
     SitemapCrawlRecord,
@@ -43,6 +46,8 @@ async def bootstrap_snowflake() -> dict[str, object]:
         "database": config.database,
         "schema": config.schema_name,
         "review_scrapes_table": ReviewScrapeRecord.__tablename__,
+        "review_scrape_queue_table": ReviewScrapeQueueRecord.__tablename__,
+        "review_scrape_pipeline_runs_table": ReviewScrapeRunRecord.__tablename__,
         "sitemap_crawl_runs_table": SitemapCrawlRunRecord.__tablename__,
         "sitemap_crawl_records_table": SitemapCrawlRecord.__tablename__,
         "review_scrape_records_table": ReviewScrapeEntryRecord.__tablename__,
@@ -51,7 +56,7 @@ async def bootstrap_snowflake() -> dict[str, object]:
 
 def main() -> None:
     result = asyncio.run(bootstrap_snowflake())
-    print(result)
+    print(json.dumps(result, indent=2, sort_keys=True))
 
 
 if __name__ == "__main__":

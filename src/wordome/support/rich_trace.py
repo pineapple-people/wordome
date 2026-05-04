@@ -273,28 +273,6 @@ class RichTraceLogger:
 
         self.console.print(Group(*renderables))
 
-    def _status(
-        self,
-        label: str,
-        state: str,
-        *,
-        depth: int | None = None,
-        detail_label: str | None = None,
-        detail_value: str | None = None,
-    ) -> None:
-        self._render_status(
-            label,
-            state,
-            "green"
-            if state == "done"
-            else "bold red"
-            if state == "failed"
-            else "white",
-            depth=depth,
-            detail_label=detail_label,
-            detail_value=detail_value,
-        )
-
     @contextmanager
     def step(self, label: str):
         start = perf_counter()

@@ -12,9 +12,10 @@ from wordome.domain import (
 from wordome.domain.demo import ReviewSectionDetector
 from wordome.infrastructure import (
     ReviewsScraperIkea,
-    SitemapPdpDiscovererService,
+    SitemapDiscovererService,
     WebFetcher,
 )
+from wordome.infrastructure.database.review_scrape_orm import ReviewScrapeRunTriggerType
 from wordome.infrastructure.database.snowflake_repository import SnowflakeRepository
 
 router = APIRouter(prefix="/sandbox", tags=["sandbox"])
@@ -46,6 +47,7 @@ async def sandbox_root():
             "/discover/pdp-links",
             "/discover/pdp-links/dump",
             "/db/discover/pdp-links/dump",
+            "/db/discover/pdp-links/scrape-reviews",
             "/reviews/ikea",
             "/db/ping",
             "/db/health",
@@ -85,6 +87,11 @@ class SitemapDiscoveryDumpRequest(SitemapDiscoveryRequest):
     output_path: str | None = None
 
 
+class SitemapReviewScrapeRequest(BaseModel):
+    retailer_name: str
+    limit: int = 10
+
+
 def _get_ikea_scraper(request: Request) -> ReviewsScraper:
     scraper = getattr(request.app.state, "ikea_scraper", None)
     if not isinstance(scraper, ReviewsScraperIkea):
@@ -94,9 +101,22 @@ def _get_ikea_scraper(request: Request) -> ReviewsScraper:
 
 def _get_sitemap_pdp_discoverer(request: Request) -> SitemapPdpDiscoverer:
     discoverer = getattr(request.app.state, "sitemap_pdp_discoverer", None)
-    if not isinstance(discoverer, SitemapPdpDiscovererService):
+    if not isinstance(discoverer, SitemapDiscovererService):
         raise RuntimeError("Sitemap PDP discoverer is not configured on app.state")
     return discoverer
+
+
+def _resolve_reviews_scraper_for_retailer(
+    retailer_name: str,
+    request: Request,
+) -> ReviewsScraper:
+    normalized_name = retailer_name.strip().lower()
+    if normalized_name in {"ikea", "ikea_us"}:
+        return _get_ikea_scraper(request)
+    raise HTTPException(
+        status_code=400,
+        detail=f"No reviews scraper is configured for retailer `{retailer_name}`.",
+    )
 
 
 async def _scrape_ikea_reviews(
@@ -293,6 +313,10 @@ async def discover_pdp_links_dump_and_persist(
             retailer_name=retailer_name,
             records=deduped_observations,
         )
+        queue_write_counts = await sf_repository.enqueue_review_scrape_urls(
+            retailer_name=retailer_name,
+            product_urls=result.pdp_urls,
+        )
         await sf_repository.finalize_sitemap_crawl_run(
             crawl_run_id=crawl_run_id,
             result=result,
@@ -309,6 +333,7 @@ async def discover_pdp_links_dump_and_persist(
         "success": True,
         "crawl_run_id": crawl_run_id,
         **record_write_counts,
+        **queue_write_counts,
         "output_path": str(output_path),
         "retailer_name": result.retailer_name,
         "entrypoint_url": result.entrypoint_url,
@@ -316,6 +341,109 @@ async def discover_pdp_links_dump_and_persist(
         "processed_sitemaps_count": len(result.processed_sitemaps),
         "skipped_sitemaps_count": len(result.skipped_sitemaps),
         "errors_count": len(result.errors),
+    }
+
+
+@router.post("/db/discover/pdp-links/scrape-reviews")
+async def scrape_reviews_from_discovered_pdp_links(
+    request: SitemapReviewScrapeRequest,
+    http_request: Request,
+    discoverer: SitemapPdpDiscoverer = Depends(_get_sitemap_pdp_discoverer),
+    sf_repository: SnowflakeRepository = Depends(_get_repository),
+):
+    """
+    Pull retailer PDP URLs from the review scrape queue, run the review scraper
+    for each selected URL, and persist resulting review snapshots.
+    """
+    try:
+        retailer_name = (
+            discoverer.resolve_retailer_name(request.retailer_name)
+            or request.retailer_name
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    scraper = _resolve_reviews_scraper_for_retailer(retailer_name, http_request)
+    review_scrape_run_id = await sf_repository.create_review_scrape_run(
+        retailer_name=retailer_name,
+        trigger_type=ReviewScrapeRunTriggerType.CRAWL.value,
+    )
+    pdp_urls = await sf_repository.claim_review_scrape_queue_urls(
+        retailer_name=retailer_name,
+        limit=request.limit,
+        review_scrape_run_id=review_scrape_run_id,
+    )
+    await sf_repository.update_review_scrape_run_selected_count(
+        review_scrape_run_id=review_scrape_run_id,
+        selected_url_count=len(pdp_urls),
+    )
+
+    results: list[dict[str, str | int | bool | None]] = []
+    success_count = 0
+    failure_count = 0
+
+    try:
+        for pdp_url in pdp_urls:
+            try:
+                (
+                    scrape_result,
+                    snapshot_event_id,
+                ) = await _scrape_and_append_ikea_reviews(
+                    pdp_url,
+                    scraper,
+                    sf_repository,
+                )
+                await sf_repository.mark_review_scrape_queue_completed(
+                    retailer_name=retailer_name,
+                    product_url=pdp_url,
+                )
+                success_count += 1
+                results.append(
+                    {
+                        "product_url": pdp_url,
+                        "success": True,
+                        "snapshot_event_id": snapshot_event_id,
+                        "reviews_count": scrape_result.reviews_count,
+                        "review_page_url": scrape_result.review_page_url,
+                    }
+                )
+            except Exception as exc:
+                failure_count += 1
+                await sf_repository.record_review_scrape_queue_failure(
+                    retailer_name=retailer_name,
+                    product_url=pdp_url,
+                    latest_error_message=str(exc),
+                )
+                results.append(
+                    {
+                        "product_url": pdp_url,
+                        "success": False,
+                        "error": str(exc),
+                    }
+                )
+                continue
+        await sf_repository.finalize_review_scrape_run(
+            review_scrape_run_id=review_scrape_run_id,
+            success_count=success_count,
+            failure_count=failure_count,
+        )
+    except Exception:
+        await sf_repository.fail_review_scrape_run(
+            review_scrape_run_id=review_scrape_run_id,
+            success_count=success_count,
+            failure_count=failure_count,
+        )
+        raise
+
+    return {
+        "success": failure_count == 0,
+        "review_scrape_run_id": review_scrape_run_id,
+        "retailer_name": retailer_name,
+        "selected_pdp_url_count": len(pdp_urls),
+        "processed_pdp_url_count": len(results),
+        "success_count": success_count,
+        "failure_count": failure_count,
+        "results": results,
     }
 
 
