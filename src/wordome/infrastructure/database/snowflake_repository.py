@@ -1,4 +1,4 @@
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from typing import Any, TypeVar
 from uuid import uuid4
@@ -310,6 +310,7 @@ class SnowflakeRepository:
         *,
         retailer_name: str,
         product_urls: list[str],
+        batch_progress_callback: Callable[[int, int, int], None] | None = None,
     ) -> dict[str, int]:
         if not product_urls:
             return {
@@ -370,7 +371,15 @@ class SnowflakeRepository:
             "existing_queue_record_count": 0,
             "touched_queue_record_count": 0,
         }
-        for product_url_batch in self._iter_batches(unique_product_urls):
+        product_url_batches = list(self._iter_batches(unique_product_urls))
+        total_batches = len(product_url_batches)
+        for batch_index, product_url_batch in enumerate(product_url_batches, start=1):
+            if batch_progress_callback is not None:
+                batch_progress_callback(
+                    batch_index,
+                    total_batches,
+                    len(product_url_batch),
+                )
             batch_counts = await self._connection.run_session(
                 lambda session, batch=product_url_batch: _upsert_batch(session, batch)
             )
@@ -639,6 +648,7 @@ class SnowflakeRepository:
         crawl_run_id: str,
         retailer_name: str,
         records: list[SitemapCrawlRecordObservation],
+        batch_progress_callback: Callable[[int, int, int], None] | None = None,
     ) -> dict[str, int]:
         if not records:
             return {
@@ -745,7 +755,15 @@ class SnowflakeRepository:
             "unchanged_record_count": 0,
             "touched_record_count": 0,
         }
-        for record_batch in self._iter_batches(records):
+        record_batches = list(self._iter_batches(records))
+        total_batches = len(record_batches)
+        for batch_index, record_batch in enumerate(record_batches, start=1):
+            if batch_progress_callback is not None:
+                batch_progress_callback(
+                    batch_index,
+                    total_batches,
+                    len(record_batch),
+                )
             batch_counts = await self._connection.run_session(
                 lambda session, batch=record_batch: _upsert_batch(session, batch)
             )

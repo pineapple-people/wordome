@@ -37,27 +37,37 @@ async def _persist_sitemap_crawl_results(
     discoverer: SitemapPdpDiscoverer,
     sf_repository: SnowflakeRepository,
 ) -> None:
+    trace_mode = getattr(discoverer, "trace_mode", TraceMode.OFF)
     trace = create_trace(
         "SitemapPersistencePipeline",
-        getattr(discoverer, "trace_mode", TraceMode.OFF),
+        trace_mode,
     )
     deduped_observations = _dedupe_crawl_record_observations(crawl_observations)
-
     trace.start()
     try:
-        trace.callout("crawl observations", str(len(deduped_observations)))
-        with trace.step("persist sitemap crawl records"):
+        trace.callout("identified crawl result items", str(len(deduped_observations)))
+        with trace.step(
+            f"writing to table: {sf_repository.SITEMAP_CRAWL_RECORDS_TABLE}"
+        ):
             await sf_repository.upsert_sitemap_crawl_records(
                 crawl_run_id=crawl_run_id,
                 retailer_name=resolved_retailer_name,
                 records=deduped_observations,
+                batch_progress_callback=lambda current, total, size: trace.callout(
+                    "batch",
+                    f"{current}/{total} ({size} records)",
+                ),
             )
-        with trace.step("enqueue review scrape urls"):
+        with trace.step(f"writing to table: {sf_repository.REVIEW_SCRAPE_QUEUE_TABLE}"):
             await sf_repository.enqueue_review_scrape_urls(
                 retailer_name=resolved_retailer_name,
                 product_urls=result.pdp_urls,
+                batch_progress_callback=lambda current, total, size: trace.callout(
+                    "batch",
+                    f"{current}/{total} ({size} urls)",
+                ),
             )
-        with trace.step("finalize sitemap crawl run"):
+        with trace.step(f"writing to table: {sf_repository.SITEMAP_CRAWL_RUNS_TABLE}"):
             await sf_repository.finalize_sitemap_crawl_run(
                 crawl_run_id=crawl_run_id,
                 result=result,
