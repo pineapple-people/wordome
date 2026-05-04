@@ -541,6 +541,3 @@ class SitemapDiscovererService:
 
     def _strip_namespace(self, tag: str) -> str:
         return tag.split("}", maxsplit=1)[-1]
-
-
-SitemapPdpDiscovererService = SitemapDiscovererService
