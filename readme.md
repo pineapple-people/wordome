@@ -1,173 +1,129 @@
-## Anaconda (Miniconda)
+## Wordome
 
-### First Time Setup
-```
-# Create environment from configuration file
-> conda env create -f environment.yaml
+Wordome collects product reviews from retailer websites. It finds product
+pages, collects reviews from those pages, and saves the results for downstream
+use, including ML processing of review content.
 
-# Verify environment was created
-> conda env list
-```
+It is currently used through the API, with IKEA covered as the sample retailer
+integration for MVP purposes.
 
-### Usage
-```
-# Activate environment
-> conda activate wordome_env
+## Overview
 
-# Deactivate environment
-> conda deactivate
-```
+Use Wordome when you want to:
+- start from a retailer site instead of manually collecting product links
+- separate page discovery from review collection
+- keep both run history and cleaned-up review data
 
-### Updating environment (to match config file)
-```
-# Update environment with any changes to environment.yaml
-> conda env update -f environment.yaml
+## End-To-End Flow
 
-# Update and remove packages not in the file (clean)
-> conda env update -f environment.yaml --prune
-```
-
-### Installing Packages
-```
-# Install via conda-forge channel (Conda's canonical source)
-# Note: Try through Conda first, fallback to pip (Conda ensures compatible dependencies)
-conda install -c conda-forge beautifulsoup4
+```text
+Retailer site
+    ->
+Find product pages
+    ->
+Prepare pages for review collection
+    ->
+Collect reviews
+    ->
+Save results for reuse
 ```
 
-## Wordome Application
+In short, Wordome finds product pages, collects reviews from them, and stores
+the results for reuse. Under the hood, it uses retailer sitemaps and Snowflake.
 
-### Install (Development Mode) 
-```
-# Install the package in development mode
-> pip install -e .
+## Usage Modes And CLI Options
 
-# Conversely, this uninstall command can be useful for troubleshooting
-> pip uninstall wordome -y
-```
-
-### Running the app
 Command shape:
+
 ```bash
-> wordome [--mode {api,demo}] [--trace [live|buffered]]
-```
-
-Optional args:
-```bash
-# Switch modes (`api` is the default)
-> --mode demo
-
-# Set scrape trace mode
-# If no value is given, `--trace` defaults to `live`
-> --trace
-> --trace live
-> --trace buffered
-
-# Show CLI help and examples
-> --help
+wordome [--mode {api,demo}] [--trace [live|buffered]]
 ```
 
 Examples:
-```
-# API service (default mode)
-# Note: this alias is defined within pyproject.toml
-> wordome
-
-# Demo mode (executes a fixed flow that showcases basic functionality)
-> wordome --mode demo
-
-# API service with buffered scrape trace output
-> wordome --trace buffered
-
-# Show CLI help and examples
-> wordome --help
-```
-
-### API Usage
-Run the API locally:
 
 ```bash
-> wordome
+# API service (default)
+wordome
+
+# API service with buffered scrape trace output
+wordome --trace buffered
+
+# Demo mode
+wordome --mode demo
+
+# CLI help
+wordome --help
 ```
 
-Then use the built-in API docs as the source of truth for request and response
-schemas:
+`api` is the default mode. `--trace` defaults to `live`. `demo` runs a fixed
+fetching-and-processing flow, not the full sitemap-to-review pipeline.
+
+For API usage, start the app with `wordome`, then open:
 
 ```text
 Swagger UI: http://127.0.0.1:8000/docs
 ReDoc:      http://127.0.0.1:8000/redoc
 ```
 
-The interactive docs are generated from the FastAPI route and model
-definitions, so they stay current as the code evolves.
+Use Swagger UI or ReDoc as the source of truth for:
+- available endpoints
+- request and response schemas
+- example payloads
+- trying requests locally from the browser
 
-### Happy Path Example
-Standard crawl-to-review flow:
+### Typical Workflow
 
-```bash
-# 1. Start the API
-> wordome
+1. Start the API with `wordome`.
+2. Call `POST /sitemap-crawls` for a retailer such as `ikea`.
+3. Wait until the crawl status becomes `completed` or `completed_with_errors`.
+4. Call `POST /review-scrapes/crawl` to process queued PDP URLs.
+5. Inspect queue health and persisted data in Snowflake.
 
-# 2. Trigger a sitemap crawl using the retailer's default configured sitemap
-> curl -X POST http://127.0.0.1:8000/sitemap-crawls \
-    -H "Content-Type: application/json" \
-    -d '{"retailer_name":"ikea"}'
+### Single-PDP Ad Hoc Usage
 
-# 2a. The kickoff returns 202 Accepted with a crawl_run_id and running status
-# 2b. Retrieve sitemap crawl status by crawl_run_id while the background task runs
-> curl http://127.0.0.1:8000/sitemap-crawls/<crawl_run_id>
-
-# 2c. Wait until the crawl status reaches `completed` or `completed_with_errors`
-# 3. Then trigger review scraping from the crawl-derived PDP URLs
-> curl -X POST http://127.0.0.1:8000/review-scrapes/crawl \
-    -H "Content-Type: application/json" \
-    -d '{"retailer_name":"ikea","limit":10}'
-```
-
-Optional ad-hoc single PDP processing:
+Use this to test review scraping without running the full sitemap flow.
 
 ```bash
-> curl -X POST http://127.0.0.1:8000/review-scrapes/single \
-    -H "Content-Type: application/json" \
-    -d '{"retailer_name":"ikea","product_url":"https://www.ikea.com/us/en/p/slattum-upholstered-bed-frame-vissle-dark-gray-40571253/","persist_result":true}'
+curl -X POST http://127.0.0.1:8000/review-scrapes/single \
+  -H "Content-Type: application/json" \
+  -d '{"retailer_name":"ikea","product_url":"https://www.ikea.com/us/en/p/slattum-upholstered-bed-frame-vissle-dark-gray-40571253/","persist_result":true}'
 ```
 
-Queue inspection:
+### Queue Inspection
 
 ```bash
-# View queue items, optionally filtered by retailer_name and queue_status
-> curl "http://127.0.0.1:8000/review-scrape-queue?retailer_name=ikea&queue_status=unclaimed&limit=10"
-
-# View aggregate queue counts, optionally filtered by retailer_name
-> curl "http://127.0.0.1:8000/review-scrape-queue/summary?retailer_name=ikea"
+curl "http://127.0.0.1:8000/review-scrape-queue?retailer_name=ikea&queue_status=unclaimed&limit=10"
+curl "http://127.0.0.1:8000/review-scrape-queue/summary?retailer_name=ikea"
 ```
 
-Sandbox routes remain available for POC and debugging workflows under
-`/sandbox/...`, but the generated Swagger docs should be the primary reference
-for the public API surface.
+Sandbox routes under `/sandbox/...` still exist for experimentation and POC
+workflows, but the generated API docs should be treated as the main public
+surface.
 
-### Pipeline Data Model
+## Pipeline Data Model
+
 `Grain` means what a single row in the table represents.
 
-#### Sitemap Crawl Stage
+### Sitemap Crawl Stage
 
 | Table | Grain | Purpose |
 |---|---|---|
 | `sitemap_crawl_runs` | 1 row per sitemap crawl execution | Track sitemap crawl job lifecycle, counts, and status |
 | `sitemap_crawl_records` | 1 row per retailer + observed/discovered URL | Persist crawl-discovered URL state and classification |
 
-#### Review Scrape Handoff
+### Review Scrape Handoff
 
 | Table | Grain | Purpose |
 |---|---|---|
 | `review_scrape_queue` | 1 row per retailer + PDP URL in the sitemap-to-review handoff layer | Queue-state layer between sitemap discovery and review scraping |
 
-Lifecycle:
+Queue lifecycle:
 - inserted by the sitemap crawl stage when a PDP URL becomes eligible for review scraping
 - moved to `claimed` while a review scrape run is actively processing it
-- returned to `unclaimed` on failure/retry with the latest run/error context preserved
-- moved to `completed` on successful review scrape for later cleanup/reconciliation
+- returned to `unclaimed` on failure or retry with the latest run and error context preserved
+- moved to `completed` on successful review scrape for later cleanup or reconciliation
 
-#### Review Scrape Stage
+### Review Scrape Stage
 
 | Table | Grain | Purpose |
 |---|---|---|
@@ -175,41 +131,22 @@ Lifecycle:
 | `review_scrapes` | 1 row per PDP scrape snapshot/event | Historical record of raw review scrape output |
 | `review_scrape_records` | 1 row per deduped review entry | Latest/current persisted review-entry state |
 
-## Utility
+## Quickstart And Setup
 
-### Ruff (code quality tool)
-```
-# Run this as code changes are made to auto-format and lint code
-# Note: fails if corrections cannot be applied automatically
-> make ruff
-```
+If you just want to prove the app works locally, use this path.
 
-### Smoke Check
+### 1. Create The Environment
+
 ```bash
-# Run a lightweight smoke check without touching Snowflake:
-# verifies key module imports, ORM table registration, and app wiring.
-> make smoke-check
+conda env create -f environment.yaml
+conda activate wordome_env
+pip install -e .
 ```
 
-## Other Notes
+### 2. Configure Snowflake Credentials
 
-### VS Code - Suggested configs
-```
-# settings.json
-{
-    "python-envs.defaultEnvManager": "ms-python.python:conda",
-    "python-envs.defaultPackageManager": "ms-python.python:conda",
-    "files.exclude": {
-        "**/__pycache__": true,
-        "**/*.pyc": true,
-        "**/.ruff_cache": true
-    },
-    "files.autoSave": "onFocusChange"
-}
-```
-
-### Snowflake SQL - Credentials
-This app integrates with Snowflake SQL as its persistence layer and the credentials are read from a root `.env` file. The app expects these keys:
+Create a root `.env` file from [`.env.example`](/Users/pototo/codebase/wordome/.env.example)
+with:
 
 ```env
 SNOWFLAKE_ACCOUNT=...
@@ -220,21 +157,134 @@ SNOWFLAKE_SCHEMA_NAME=...
 SNOWFLAKE_WAREHOUSE=...
 ```
 
-The repo includes a matching [`.env.example`](/Users/pototo/codebase/wordome/.env.example) template.
-Note: Provide actual credential values locally in `.env` file (avoid comitting this actual file)
-
-### Snowflake SQL - Bootstrap
-Run this after first-time credential setup:
+### 3. Bootstrap Database Objects
 
 ```bash
-> make bootstrap-snowflake
+make bootstrap-snowflake
 ```
 
-This bootstrap flow is designed to be idempotent:
-- it creates the configured database and schema if missing
-- it creates the `review_scrape_queue` table if missing
-- it creates the `review_scrape_pipeline_runs` table if missing
-- it creates the `review_scrapes` table if missing
-- it creates the `review_scrape_records` current-state table if missing
-- it creates the `sitemap_crawl_runs` table if missing
-- it creates the `sitemap_crawl_records` table if missing
+### 4. Start The API
+
+```bash
+wordome
+```
+
+### 5. Run The Happy Path
+
+Kick off sitemap discovery:
+
+```bash
+curl -X POST http://127.0.0.1:8000/sitemap-crawls \
+  -H "Content-Type: application/json" \
+  -d '{"retailer_name":"ikea"}'
+```
+
+Poll the returned `crawl_run_id` until the run finishes:
+
+```bash
+curl http://127.0.0.1:8000/sitemap-crawls/<crawl_run_id>
+```
+
+Then scrape reviews from the crawl-derived queue:
+
+```bash
+curl -X POST http://127.0.0.1:8000/review-scrapes/crawl \
+  -H "Content-Type: application/json" \
+  -d '{"retailer_name":"ikea","limit":10}'
+```
+
+### Setup Details
+
+#### Conda Environment
+
+Create the environment:
+
+```bash
+conda env create -f environment.yaml
+```
+
+Activate and deactivate:
+
+```bash
+conda activate wordome_env
+conda deactivate
+```
+
+Update the environment to match `environment.yaml`:
+
+```bash
+conda env update -f environment.yaml
+conda env update -f environment.yaml --prune
+```
+
+#### Installing Packages
+
+Prefer Conda first, then fall back to `pip` only if needed:
+
+```bash
+conda install -c conda-forge beautifulsoup4
+```
+
+#### Development Install
+
+```bash
+pip install -e .
+pip uninstall wordome -y
+```
+
+#### Snowflake Bootstrap Notes
+
+The bootstrap flow is designed to be idempotent. It creates the configured
+database, schema, and these tables if they do not already exist:
+- `review_scrape_queue`
+- `review_scrape_pipeline_runs`
+- `review_scrapes`
+- `review_scrape_records`
+- `sitemap_crawl_runs`
+- `sitemap_crawl_records`
+
+### Developer Utilities
+
+#### Smoke Check
+
+Run a lightweight verification without touching Snowflake:
+
+```bash
+make smoke-check
+```
+
+This checks:
+- key module imports
+- ORM table registration
+- app wiring
+
+#### Ruff
+
+Format and lint the codebase:
+
+```bash
+make ruff
+```
+
+Check formatting and lint without modifying files:
+
+```bash
+make ruff-check
+```
+
+## Other Notes
+
+### Suggested VS Code Settings
+
+```json
+{
+  "python-envs.defaultEnvManager": "ms-python.python:conda",
+  "python-envs.defaultPackageManager": "ms-python.python:conda",
+  "files.exclude": {
+    "**/__pycache__": true,
+    "**/*.pyc": true,
+    "**/.ruff_cache": true
+  },
+  "files.autoSave": "onFocusChange"
+}
+```
